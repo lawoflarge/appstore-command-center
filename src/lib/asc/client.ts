@@ -2,6 +2,7 @@ import { gunzipSync } from "node:zlib";
 import { signAscToken, type AscKey } from "./jwt";
 
 const BASE = "https://api.appstoreconnect.apple.com";
+const MAX_PAGES = 500;
 
 function authHeaders(key: AscKey) {
   return { Authorization: `Bearer ${signAscToken(key)}` };
@@ -18,7 +19,9 @@ export async function ascGetJson<T = unknown>(key: AscKey, url: string): Promise
 export async function ascGetAllPages(key: AscKey, url: string): Promise<any[]> {
   let next: string | undefined = url.startsWith("http") ? url : BASE + url;
   const out: any[] = [];
+  let pages = 0;
   while (next) {
+    if (++pages > MAX_PAGES) throw new Error(`ascGetAllPages: exceeded ${MAX_PAGES} pages at ${next}`);
     const page: any = await ascGetJson(key, next);
     out.push(...(page.data ?? []));
     next = page.links?.next;
@@ -40,7 +43,7 @@ export async function ascGetGzipTsv(
 }
 
 export function parseTsv(text: string): Record<string, string>[] {
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
   const header = lines[0].split("\t");
   return lines.slice(1).map((line) => {

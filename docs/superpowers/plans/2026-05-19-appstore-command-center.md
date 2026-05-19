@@ -418,7 +418,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```ts
 import { test, expect, vi, afterEach } from "vitest";
 import { gzipSync } from "node:zlib";
-import { ascGetAllPages, ascGetGzipTsv } from "@/lib/asc/client";
+import { ascGetJson, ascGetAllPages, ascGetGzipTsv, parseTsv } from "@/lib/asc/client";
 
 vi.mock("@/lib/asc/jwt", () => ({
   signAscToken: () => "test-token",
@@ -455,6 +455,22 @@ test("ascGetGzipTsv returns [] on 404 (no report yet)", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
   expect(await ascGetGzipTsv(key, "https://api/sales")).toEqual([]);
 });
+
+test("ascGetJson throws with status and url on non-ok", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+  await expect(ascGetJson(key, "https://api/x")).rejects.toThrow(/ASC 500 https:\/\/api\/x: boom/);
+});
+
+test("ascGetGzipTsv throws on non-404 error", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
+  await expect(ascGetGzipTsv(key, "https://api/s")).rejects.toThrow(/ASC 403/);
+});
+
+test("parseTsv strips CRLF and handles header-only/empty", () => {
+  expect(parseTsv("A\tB\r\n5\tDE\r\n")).toEqual([{ A: "5", B: "DE" }]);
+  expect(parseTsv("A\tB\r\n")).toEqual([]);
+  expect(parseTsv("")).toEqual([]);
+});
 ```
 
 > Note: the client unit test mocks `@/lib/asc/jwt` so the HTTP layer is tested in isolation; JWT signing correctness is covered by Task 1.2's test.
@@ -468,6 +484,7 @@ import { gunzipSync } from "node:zlib";
 import { signAscToken, type AscKey } from "./jwt";
 
 const BASE = "https://api.appstoreconnect.apple.com";
+const MAX_PAGES = 500;
 
 function authHeaders(key: AscKey) {
   return { Authorization: `Bearer ${signAscToken(key)}` };
@@ -484,7 +501,9 @@ export async function ascGetJson<T = unknown>(key: AscKey, url: string): Promise
 export async function ascGetAllPages(key: AscKey, url: string): Promise<any[]> {
   let next: string | undefined = url.startsWith("http") ? url : BASE + url;
   const out: any[] = [];
+  let pages = 0;
   while (next) {
+    if (++pages > MAX_PAGES) throw new Error(`ascGetAllPages: exceeded ${MAX_PAGES} pages at ${next}`);
     const page: any = await ascGetJson(key, next);
     out.push(...(page.data ?? []));
     next = page.links?.next;
@@ -506,7 +525,7 @@ export async function ascGetGzipTsv(
 }
 
 export function parseTsv(text: string): Record<string, string>[] {
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
   const header = lines[0].split("\t");
   return lines.slice(1).map((line) => {

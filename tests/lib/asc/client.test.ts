@@ -1,6 +1,6 @@
 import { test, expect, vi, afterEach } from "vitest";
 import { gzipSync } from "node:zlib";
-import { ascGetAllPages, ascGetGzipTsv } from "@/lib/asc/client";
+import { ascGetJson, ascGetAllPages, ascGetGzipTsv, parseTsv } from "@/lib/asc/client";
 
 vi.mock("@/lib/asc/jwt", () => ({
   signAscToken: () => "test-token",
@@ -36,4 +36,20 @@ test("ascGetGzipTsv parses gzipped TSV with header", async () => {
 test("ascGetGzipTsv returns [] on 404 (no report yet)", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
   expect(await ascGetGzipTsv(key, "https://api/sales")).toEqual([]);
+});
+
+test("ascGetJson throws with status and url on non-ok", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+  await expect(ascGetJson(key, "https://api/x")).rejects.toThrow(/ASC 500 https:\/\/api\/x: boom/);
+});
+
+test("ascGetGzipTsv throws on non-404 error", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
+  await expect(ascGetGzipTsv(key, "https://api/s")).rejects.toThrow(/ASC 403/);
+});
+
+test("parseTsv strips CRLF and handles header-only/empty", () => {
+  expect(parseTsv("A\tB\r\n5\tDE\r\n")).toEqual([{ A: "5", B: "DE" }]);
+  expect(parseTsv("A\tB\r\n")).toEqual([]);
+  expect(parseTsv("")).toEqual([]);
 });
