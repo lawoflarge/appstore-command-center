@@ -420,6 +420,10 @@ import { test, expect, vi, afterEach } from "vitest";
 import { gzipSync } from "node:zlib";
 import { ascGetAllPages, ascGetGzipTsv } from "@/lib/asc/client";
 
+vi.mock("@/lib/asc/jwt", () => ({
+  signAscToken: () => "test-token",
+}));
+
 const key = { keyId: "k", issuerId: "i", privateKey: "p" };
 
 afterEach(() => vi.restoreAllMocks());
@@ -452,6 +456,8 @@ test("ascGetGzipTsv returns [] on 404 (no report yet)", async () => {
   expect(await ascGetGzipTsv(key, "https://api/sales")).toEqual([]);
 });
 ```
+
+> Note: the client unit test mocks `@/lib/asc/jwt` so the HTTP layer is tested in isolation; JWT signing correctness is covered by Task 1.2's test.
 
 - [ ] **Step 2: Run** → Expected: FAIL.
 
