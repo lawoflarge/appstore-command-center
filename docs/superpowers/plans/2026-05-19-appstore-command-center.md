@@ -2257,12 +2257,14 @@ import { configPath, type Config } from "@/lib/store/paths";
 export const maxDuration = 60;
 
 export async function GET(req: Request): Promise<Response> {
-  const e = env();
+  const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   const url = new URL(req.url);
-  if (auth !== `Bearer ${e.CRON_SECRET}` && url.searchParams.get("key") !== e.CRON_SECRET) {
+  if (!secret || (auth !== `Bearer ${secret}` && url.searchParams.get("key") !== secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  const e = env();
   const key = ascKeyFromEnv(e);
   const store = makeStore(ghBackendFromEnv());
   const llm = llmFromEnv(MODELS.cheap);
@@ -2295,11 +2297,11 @@ export async function GET(req: Request): Promise<Response> {
 
 ```json
 {
-  "crons": [{ "path": "/api/cron?key=$CRON_SECRET", "schedule": "0 6 * * *" }]
+  "crons": [{ "path": "/api/cron", "schedule": "0 6 * * *" }]
 }
 ```
 
-> Note: Vercel substitutes env in `vercel.json` crons is not supported; instead the cron calls `/api/cron` and Vercel automatically adds the `Authorization: Bearer $CRON_SECRET` header for project cron jobs. Keep the `?key=` fallback removed before deploy if undesired. Acceptance: route returns 401 without the secret, 200 with it.
+> Auth is checked against `process.env.CRON_SECRET` BEFORE `env()` runs, so an unauthorized request returns 401 without requiring full env validation. Vercel auto-sends `Authorization: Bearer $CRON_SECRET` to project crons.
 
 - [ ] **Step 5: Run** — `pnpm test tests/app/cron-route.test.ts` → PASS. `pnpm build` → succeeds.
 
