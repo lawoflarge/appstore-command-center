@@ -1582,17 +1582,19 @@ test("projects month total from run-rate", () => {
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement `src/lib/intelligence/forecast.ts`**
 
 ```ts
-import { parseISO, getDaysInMonth } from "date-fns";
 import type { Point } from "./baseline";
 
 export interface Forecast { soFar: number; projected: number; band: { low: number; high: number }; }
+
+const daysInMonthUtc = (day: string) =>
+  new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)), 0)).getUTCDate();
 
 export function forecastMonth(series: Point[], asOf: string): Forecast {
   const month = asOf.slice(0, 7);
   const inMonth = series.filter((p) => p.day.startsWith(month));
   const soFar = inMonth.reduce((s, p) => s + p.value, 0);
   const dayNum = Number(asOf.slice(8, 10));
-  const totalDays = getDaysInMonth(parseISO(asOf + "T00:00:00Z"));
+  const totalDays = daysInMonthUtc(asOf);
   const perDay = dayNum > 0 ? soFar / dayNum : 0;
   const projected = perDay * totalDays;
   const values = inMonth.map((p) => p.value);
