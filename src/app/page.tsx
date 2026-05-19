@@ -13,13 +13,15 @@ export default async function Glance() {
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
+  const rating = g.blendedRating;
   return (
     <main>
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
-      <div className="mb-5 grid grid-cols-3 gap-4">
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Total downloads" value={total.toLocaleString()} />
         <Stat label="Today" value={today.toLocaleString()} />
+        <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
       <div className="grid gap-4">

@@ -2118,6 +2118,7 @@ import {
   type AppMeta, type Config, type RunStatus, type Review,
 } from "@/lib/store/paths";
 import type { Store } from "@/lib/store/store";
+import type { AppInput } from "@/lib/intelligence/engine";
 
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
@@ -2126,7 +2127,7 @@ export interface OrchestratorDeps {
   collectReviews: (appId: string) => Promise<Review[]>;
   collectRatings: (appId: string, day: string) => Promise<any>;
   collectKeywords: (appId: string, day: string) => Promise<any[]>;
-  runIntelligence: (args: { day: string; apps: any[]; }) => Promise<any>;
+  runIntelligence: (args: { day: string; apps: AppInput[] }) => Promise<unknown>;
 }
 
 export async function runDailyCollection(input: {
@@ -2531,12 +2532,14 @@ test("buildGlance assembles totals + rating + insights per visible app", async (
       if (p === "data/config.json") return { apps: {} };
       if (p === "data/1/meta.json") return { appId: "1", name: "A", hidden: false, archived: false, releases: [] };
       if (p === "data/1/sales/2026-05.json") return [{ day: "2026-05-18", byCountry: {}, total: 8, redownloads: 0, proceedsUsd: 0 }];
+      if (p === "data/1/ratings/2026-05.json") return [{ day: "2026-05-18", byCountry: {}, avg: 4.5, count: 100 }];
       if (p === "data/insights.json") return { generatedAt: "2026-05-18", apps: { "1": { name: "A", anomaly: null } } };
       return fb;
     },
   };
   const g = await buildGlance(store as any, ["1"], "2026-05");
-  expect(g.apps[0]).toMatchObject({ appId: "1", name: "A", today: 8 });
+  expect(g.apps[0]).toMatchObject({ appId: "1", name: "A", today: 8, rating: { avg: 4.5, count: 100 } });
+  expect(g.blendedRating).toEqual({ avg: 4.5, count: 100 });
 });
 ```
 
@@ -2544,20 +2547,34 @@ test("buildGlance assembles totals + rating + insights per visible app", async (
 
 ```ts
 import type { Store } from "@/lib/store/store";
-import { salesPath, appMetaPath, insightsPath, configPath, type SalesDay, type AppMeta, type Config } from "@/lib/store/paths";
+import { salesPath, appMetaPath, insightsPath, ratingsPath, configPath, type SalesDay, type AppMeta, type RatingPoint, type Config } from "@/lib/store/paths";
 import { totals } from "./downloads";
 
 export async function buildGlance(store: Store, appIds: string[], month: string) {
   const insights = await store.readJson<any>(insightsPath(), { apps: {} });
   const apps = [];
+  let ratingWeighted = 0;
+  let ratingCount = 0;
   for (const id of appIds) {
     const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
     if (!meta || meta.hidden || meta.archived) continue;
     const sales = await store.readJson<SalesDay[]>(salesPath(id, month + "-01"), []);
     const day = sales.at(-1)?.day ?? "";
-    apps.push({ appId: id, name: meta.name, ...totals(sales, day), anomaly: insights.apps?.[id]?.anomaly ?? null });
+    const ratings = await store.readJson<RatingPoint[]>(ratingsPath(id, month + "-01"), []);
+    const lastRating = ratings.at(-1) ?? null;
+    if (lastRating && lastRating.count > 0) {
+      ratingWeighted += lastRating.avg * lastRating.count;
+      ratingCount += lastRating.count;
+    }
+    apps.push({
+      appId: id,
+      name: meta.name,
+      ...totals(sales, day),
+      rating: lastRating ? { avg: lastRating.avg, count: lastRating.count } : null,
+      anomaly: insights.apps?.[id]?.anomaly ?? null,
+    });
   }
-  return { apps };
+  return { apps, blendedRating: { avg: ratingCount ? ratingWeighted / ratingCount : 0, count: ratingCount } };
 }
 
 export async function visibleAppIds(store: Store): Promise<string[]> {
@@ -2887,13 +2904,15 @@ export default async function Glance() {
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
+  const rating = g.blendedRating;
   return (
     <main>
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
-      <div className="mb-5 grid grid-cols-3 gap-4">
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Total downloads" value={total.toLocaleString()} />
         <Stat label="Today" value={today.toLocaleString()} />
+        <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
       <div className="grid gap-4">
@@ -3174,3 +3193,5 @@ No spec requirement is left without a task.
 **3. Type consistency:** Shared types defined once in `src/lib/store/paths.ts` (`SalesDay`, `AnalyticsDay`, `RatingPoint`, `Review`, `KeywordRank`, `AppMeta`, `Config`, `RunStatus`); `Point` defined in `baseline.ts` and reused by `downloads.ts`/`forecast.ts`; `Insights`/`AppInsight` defined in `engine.ts` and consumed by pages. `store` interface (`readJson`/`writeJson`/`upsertDailyArray`) is consistent across orchestrator, API, and pages. Collector function names (`collectSales`, `collectRatings`, `collectKeywordRanks`, `mapReviews`, `parseAnalyticsCsv`) are referenced consistently in the cron route.
 
 One refinement applied inline: the orchestrator persists raw data and a lightweight insights pass; full series-backed intelligence is computed on read (Milestone 7), which keeps the daily cron inside the Vercel Hobby 60s budget (spec §12 risk) without losing any feature.
+
+Post-implementation final review closed a spec gap: Glance now surfaces the blended average rating (spec §2/§7); `OrchestratorDeps.runIntelligence` typed to `AppInput[]`.

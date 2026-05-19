@@ -4,6 +4,7 @@ import {
   type AppMeta, type Config, type RunStatus, type Review,
 } from "@/lib/store/paths";
 import type { Store } from "@/lib/store/store";
+import type { AppInput } from "@/lib/intelligence/engine";
 
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
@@ -12,7 +13,7 @@ export interface OrchestratorDeps {
   collectReviews: (appId: string) => Promise<Review[]>;
   collectRatings: (appId: string, day: string) => Promise<any>;
   collectKeywords: (appId: string, day: string) => Promise<any[]>;
-  runIntelligence: (args: { day: string; apps: any[]; }) => Promise<any>;
+  runIntelligence: (args: { day: string; apps: AppInput[] }) => Promise<unknown>;
 }
 
 export async function runDailyCollection(input: {
