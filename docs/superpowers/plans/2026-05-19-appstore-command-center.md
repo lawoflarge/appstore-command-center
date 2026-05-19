@@ -303,14 +303,14 @@ test("dayRange is inclusive and ordered", () => {
 - [ ] **Step 3: Implement `src/lib/dates.ts`**
 
 ```ts
-import { addDays as fnsAddDays, formatISO, parseISO } from "date-fns";
-
 export function ymd(d: Date): string {
-  return formatISO(d, { representation: "date" }).slice(0, 10);
+  return d.toISOString().slice(0, 10);
 }
 
 export function addDays(day: string, delta: number): string {
-  return ymd(fnsAddDays(parseISO(day + "T00:00:00Z"), delta));
+  const d = new Date(day + "T00:00:00.000Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return ymd(d);
 }
 
 export function dayRange(from: string, to: string): string[] {
@@ -1263,6 +1263,8 @@ export async function collectKeywordRanks(
 ---
 
 ## Milestone 4 — Intelligence engine
+
+> ⚠️ UTC note (carried from Task 1.1): `date-fns` `getDay`/`getDaysInMonth` operate in LOCAL time. In Tasks 4.1, 4.5 and 4.8 compute these in UTC instead — weekday: `new Date(day + "T00:00:00Z").getUTCDay()`; days-in-month: `new Date(Date.UTC(Number(day.slice(0,4)), Number(day.slice(5,7)), 0)).getUTCDate()`. The provided tests assume UTC; using the local-time date-fns variants will fail in non-UTC environments.
 
 ### Task 4.1: Day-of-week baseline & z-score
 
