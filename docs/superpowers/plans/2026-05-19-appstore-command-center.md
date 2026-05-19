@@ -105,17 +105,17 @@ pnpm add -D vitest @vitest/coverage-v8 @testing-library/react @testing-library/j
 
 ```bash
 # ASC API
-ASC_KEY_ID=<ASC_KEY_ID>
-ASC_ISSUER_ID=<ASC_ISSUER_ID>
+ASC_KEY_ID=YOUR_ASC_KEY_ID
+ASC_ISSUER_ID=your-asc-issuer-uuid
 ASC_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 ASC_VENDOR_NUMBER=
 # GitHub OAuth (dashboard login)
 GITHUB_OAUTH_CLIENT_ID=
 GITHUB_OAUTH_CLIENT_SECRET=
 AUTH_SECRET=
-ALLOWED_GITHUB_LOGIN=lawoflarge
+ALLOWED_GITHUB_LOGIN=your-github-username
 # GitHub data store
-GITHUB_DATA_REPO=lawoflarge/appstore-command-center
+GITHUB_DATA_REPO=your-org/appstore-command-center
 GITHUB_DATA_TOKEN=
 GITHUB_DATA_BRANCH=main
 # LLM
