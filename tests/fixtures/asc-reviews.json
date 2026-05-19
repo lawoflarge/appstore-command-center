@@ -1,0 +1,4 @@
+[
+  { "id": "r1", "attributes": { "rating": 5, "title": "Great", "body": "Love it", "reviewerNickname": "Max", "territory": "DEU", "createdDate": "2026-05-18T10:00:00Z" }, "relationships": { "response": { "data": null } } },
+  { "id": "r2", "attributes": { "rating": 2, "title": "Crash", "body": "Crashes on launch", "reviewerNickname": "Lea", "territory": "NLD", "createdDate": "2026-05-19T08:00:00Z" }, "relationships": { "response": { "data": { "id": "resp1" } } } }
+]
