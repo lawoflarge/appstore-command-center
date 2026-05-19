@@ -1350,15 +1350,15 @@ test("zScore returns null with too few same-weekday points", () => {
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement `src/lib/intelligence/baseline.ts`**
 
 ```ts
-import { parseISO, getDay } from "date-fns";
-
 export interface Point { day: string; value: number; }
+
+const utcDow = (day: string) => new Date(day + "T00:00:00Z").getUTCDay();
 
 export function zScore(series: Point[], day: string):
   { z: number; baseline: number; std: number } | null {
-  const dow = getDay(parseISO(day + "T00:00:00Z"));
+  const dow = utcDow(day);
   const prior = series.filter(
-    (p) => p.day < day && getDay(parseISO(p.day + "T00:00:00Z")) === dow,
+    (p) => p.day < day && utcDow(p.day) === dow,
   );
   if (prior.length < 3) return null;
   const cur = series.find((p) => p.day === day);
