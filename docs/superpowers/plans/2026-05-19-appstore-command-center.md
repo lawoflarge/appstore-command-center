@@ -25,6 +25,7 @@ Source: `docs/superpowers/specs/2026-05-19-appstore-command-center-design.md`. R
 - **Dates are UTC.** A "report day" is a UTC calendar date `YYYY-MM-DD`.
 - **Money/units** from ASC are integers/strings; never coerce with `parseFloat` without trimming.
 - Run all commands from the project root `/path/to/appstore-command-center`.
+- **Lint:** `@typescript-eslint/no-explicit-any` is disabled in `eslint.config.mjs` — external ASC/iTunes/LLM JSON is intentionally `any` at the I/O boundary. Do NOT use `eslint: { ignoreDuringBuilds }`; keep all other lint rules active at build.
 
 ## File Structure (decomposition)
 
