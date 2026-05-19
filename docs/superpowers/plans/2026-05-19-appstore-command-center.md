@@ -2342,16 +2342,19 @@ export function isAllowed(profile: { login?: string } | null, allowed: string): 
   return !!profile?.login && profile.login === allowed;
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  providers: [GitHub({
-    clientId: env().GITHUB_OAUTH_CLIENT_ID,
-    clientSecret: env().GITHUB_OAUTH_CLIENT_SECRET,
-  })],
-  secret: env().AUTH_SECRET,
-  callbacks: {
-    signIn({ profile }) { return isAllowed(profile as any, env().ALLOWED_GITHUB_LOGIN); },
-    authorized({ auth }) { return !!auth?.user; },
-  },
+export const { handlers, auth, signIn, signOut } = NextAuth(() => {
+  const e = env();
+  return {
+    providers: [GitHub({
+      clientId: e.GITHUB_OAUTH_CLIENT_ID,
+      clientSecret: e.GITHUB_OAUTH_CLIENT_SECRET,
+    })],
+    secret: e.AUTH_SECRET,
+    callbacks: {
+      signIn({ profile }) { return isAllowed(profile as { login?: string } | null, e.ALLOWED_GITHUB_LOGIN); },
+      authorized({ auth }) { return !!auth?.user; },
+    },
+  };
 });
 ```
 
@@ -2363,6 +2366,8 @@ export const { GET, POST } = handlers;
 ```
 
 - [ ] **Step 5: Run** → PASS. `pnpm build` → succeeds. **Step 6: Commit** `feat: GitHub-OAuth allowlisted auth`.
+
+Uses NextAuth v5 lazy config callback so `env()` is evaluated per-request, not at import — keeps `isAllowed` importable in tests and validates env only when auth actually runs.
 
 ### Task 6.2: Edge middleware gate
 
