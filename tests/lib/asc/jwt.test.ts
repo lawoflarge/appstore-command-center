@@ -1,7 +1,7 @@
 import { test, expect } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import jwt from "jsonwebtoken";
-import { signAscToken } from "@/lib/asc/jwt";
+import { signAscToken, ascKeyFromEnv } from "@/lib/asc/jwt";
 
 test("signAscToken produces a verifiable ES256 token", () => {
   const { privateKey, publicKey } = generateKeyPairSync("ec", {
@@ -16,4 +16,15 @@ test("signAscToken produces a verifiable ES256 token", () => {
   const header = JSON.parse(Buffer.from(token.split(".")[0], "base64").toString());
   expect(header.kid).toBe("KID");
   expect(header.alg).toBe("ES256");
+});
+
+test("ascKeyFromEnv converts literal \\n to real newlines", () => {
+  const key = ascKeyFromEnv({
+    ASC_KEY_ID: "kid",
+    ASC_ISSUER_ID: "iss",
+    ASC_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\\nABCD\\n-----END PRIVATE KEY-----",
+  });
+  expect(key.privateKey).toBe("-----BEGIN PRIVATE KEY-----\nABCD\n-----END PRIVATE KEY-----");
+  expect(key.keyId).toBe("kid");
+  expect(key.issuerId).toBe("iss");
 });
