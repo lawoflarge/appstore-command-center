@@ -27,7 +27,9 @@ export async function runDailyCollection(input: {
     lastSuccess: "",
     perApp: {},
   };
+  let hadFailure = false;
   const mark = (id: string, k: string, ok: boolean, error?: string) => {
+    if (!ok) hadFailure = true;
     (status.perApp[id] ??= {})[k] = { ok, at: new Date().toISOString(), ...(error ? { error } : {}) };
   };
 
@@ -72,7 +74,7 @@ export async function runDailyCollection(input: {
       const watch = config.apps[id]?.keywords ?? [];
       const kr = await deps.collectKeywords(id, day);
       if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
-      void watch;
+      void watch; // watchlist is resolved from config by the cron route (Task 5.3) and passed into collectKeywords; read here only to keep config wired for a future per-orchestrator use
       mark(id, "keywords", true);
     } catch (e: any) { mark(id, "keywords", false, String(e?.message ?? e)); }
 
@@ -91,7 +93,7 @@ export async function runDailyCollection(input: {
     apps.forEach((a) => mark(a.appId, "intelligence", false, String(e?.message ?? e)));
   }
 
-  status.lastSuccess = new Date().toISOString();
+  status.lastSuccess = hadFailure ? "" : new Date().toISOString();
   await store.writeJson(runStatusPath(), status, `data: run-status ${day}`);
   return status;
 }

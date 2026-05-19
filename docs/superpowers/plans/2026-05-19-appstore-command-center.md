@@ -2033,25 +2033,77 @@ function memStore() {
   };
 }
 
+const okDeps = (over: any = {}) => ({
+  discoverApps: async () => [{ appId: "1", name: "A", bundleId: "b", sku: "s", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] }],
+  collectSales: async () => ({ "1": { day: "2026-05-18", byCountry: { DE: 5 }, total: 5, redownloads: 0, proceedsUsd: 0 } }),
+  collectAnalytics: async () => ({}),
+  collectReviews: async () => [],
+  collectRatings: async () => ({ day: "2026-05-18", byCountry: {}, avg: 0, count: 0 }),
+  collectKeywords: async () => [],
+  runIntelligence: async () => ({ generatedAt: "2026-05-18", apps: {} }),
+  ...over,
+});
+
 test("runDailyCollection writes per-app data + insights + run-status, isolating failures", async () => {
   const store = memStore();
   const status = await runDailyCollection({
     day: "2026-05-18",
     store: store as any,
-    deps: {
-      discoverApps: async () => [{ appId: "1", name: "A", bundleId: "b", sku: "s", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] }],
-      collectSales: async () => ({ "1": { day: "2026-05-18", byCountry: { DE: 5 }, total: 5, redownloads: 0, proceedsUsd: 0 } }),
-      collectAnalytics: async () => { throw new Error("analytics down"); },
-      collectReviews: async () => [],
-      collectRatings: async () => ({ day: "2026-05-18", byCountry: {}, avg: 0, count: 0 }),
-      collectKeywords: async () => [],
-      runIntelligence: async () => ({ generatedAt: "2026-05-18", apps: {} }),
-    },
+    deps: okDeps({ collectAnalytics: async () => { throw new Error("analytics down"); } }),
   });
   expect(store.fs.get("data/1/sales/2026-05.json")[0].total).toBe(5);
   expect(store.fs.get("data/insights.json").generatedAt).toBe("2026-05-18");
   expect(status.perApp["1"].analytics.ok).toBe(false);
   expect(status.perApp["1"].sales.ok).toBe(true);
+});
+
+test("a fully clean run stamps lastSuccess", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({ day: "2026-05-18", store: store as any, deps: okDeps() });
+  expect(status.lastSuccess).not.toBe("");
+  expect(Number.isNaN(Date.parse(status.lastSuccess))).toBe(false);
+});
+
+test("any collector failure leaves lastSuccess empty (silent-failure watch)", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    deps: okDeps({ collectAnalytics: async () => { throw new Error("x"); } }),
+  });
+  expect(status.lastSuccess).toBe("");
+});
+
+test("one app's analytics failure does not affect another app", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    deps: okDeps({
+      discoverApps: async () => [
+        { appId: "1", name: "A", bundleId: "b", sku: "s", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
+        { appId: "2", name: "B", bundleId: "b2", sku: "s2", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
+      ],
+      collectSales: async () => ({
+        "1": { day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 },
+        "2": { day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 },
+      }),
+      collectAnalytics: async (id: string) => { if (id === "1") throw new Error("a1 down"); return {}; },
+    }),
+  });
+  expect(store.fs.get("data/2/sales/2026-05.json")[0].total).toBe(2);
+  expect(status.perApp["1"].analytics.ok).toBe(false);
+  expect(status.perApp["2"].analytics.ok).toBe(true);
+  expect(status.perApp["2"].sales.ok).toBe(true);
+});
+
+test("runIntelligence failure is isolated, recorded, and blocks lastSuccess", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    deps: okDeps({ runIntelligence: async () => { throw new Error("intel boom"); } }),
+  });
+  expect(status.perApp["1"].intelligence.ok).toBe(false);
+  expect(status.lastSuccess).toBe("");
+  expect(store.fs.has("data/insights.json")).toBe(false);
 });
 ```
 
@@ -2087,11 +2139,12 @@ export async function runDailyCollection(input: {
     lastSuccess: "",
     perApp: {},
   };
+  let hadFailure = false;
   const mark = (id: string, k: string, ok: boolean, error?: string) => {
+    if (!ok) hadFailure = true;
     (status.perApp[id] ??= {})[k] = { ok, at: new Date().toISOString(), ...(error ? { error } : {}) };
   };
 
-  // app meta (preserve firstSeen/hidden/archived/releases)
   for (const a of apps) {
     const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
     const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
@@ -2099,7 +2152,6 @@ export async function runDailyCollection(input: {
   }
 
   const appIds = apps.map((a) => a.appId);
-  // sales is a single account-wide report
   let salesByApp: Record<string, any> = {};
   try { salesByApp = await deps.collectSales(appIds, day); appIds.forEach((id) => mark(id, "sales", true)); }
   catch (e: any) { appIds.forEach((id) => mark(id, "sales", false, String(e?.message ?? e))); }
@@ -2134,7 +2186,7 @@ export async function runDailyCollection(input: {
       const watch = config.apps[id]?.keywords ?? [];
       const kr = await deps.collectKeywords(id, day);
       if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
-      void watch;
+      void watch; // watchlist is resolved from config by the cron route (Task 5.3) and passed into collectKeywords; read here only to keep config wired for a future per-orchestrator use
       mark(id, "keywords", true);
     } catch (e: any) { mark(id, "keywords", false, String(e?.message ?? e)); }
 
@@ -2153,13 +2205,13 @@ export async function runDailyCollection(input: {
     apps.forEach((a) => mark(a.appId, "intelligence", false, String(e?.message ?? e)));
   }
 
-  status.lastSuccess = new Date().toISOString();
+  status.lastSuccess = hadFailure ? "" : new Date().toISOString();
   await store.writeJson(runStatusPath(), status, `data: run-status ${day}`);
   return status;
 }
 ```
 
-> The intelligence inputs are fed from freshly stored series in the API layer for the UI; the orchestrator persists raw data and a baseline insights pass. Series-backed intelligence (full `downloads`/`funnel` history) is recomputed on read in Milestone 7 aggregations, keeping the cron fast and within the 60s budget.
+> The intelligence inputs are fed from freshly stored series in the API layer for the UI; the orchestrator persists raw data and a baseline insights pass. Series-backed intelligence (full `downloads`/`funnel` history) is recomputed on read in Milestone 7 aggregations, keeping the cron fast and within the 60s budget. `lastSuccess` is only stamped when the entire pass had zero collector/intelligence failures, so the silent-failure-watch insight can treat an empty `lastSuccess` as 'last run was degraded'.
 
 - [ ] **Step 4: Run** → PASS. **Step 5: Commit** `feat: daily orchestrator`.
 
