@@ -6,7 +6,7 @@
 
 **Architecture:** A daily Vercel Cron runs an orchestrator that auto-discovers every app on the Apple account, runs five isolated collectors (sales, analytics, reviews, ratings, keyword-rank), and commits partitioned JSON to the repo via the GitHub Contents API. A pure-function intelligence engine (plus batched Anthropic calls) turns the series into insights. A GitHub-OAuth-locked Next.js App Router UI reads the committed JSON through a single data-access layer and renders six screens.
 
-**Tech Stack:** Next.js 15 (App Router, TypeScript), pnpm, Vitest, Tailwind CSS v4, Auth.js v5 (GitHub), Recharts, `jsonwebtoken`, `@anthropic-ai/sdk`, `zod`, `date-fns`, Node `zlib`, GitHub REST Contents API.
+**Tech Stack:** Next.js 15 (App Router, TypeScript), pnpm, Vitest, Tailwind CSS v4, Auth.js v5 (GitHub), Recharts, `jsonwebtoken`, `@anthropic-ai/sdk`, `zod`, Node `zlib`, GitHub REST Contents API.
 
 ---
 
@@ -26,6 +26,7 @@ Source: `docs/superpowers/specs/2026-05-19-appstore-command-center-design.md`. R
 - **Money/units** from ASC are integers/strings; never coerce with `parseFloat` without trimming.
 - Run all commands from the project root `/path/to/appstore-command-center`.
 - **Lint:** `@typescript-eslint/no-explicit-any` is disabled in `eslint.config.mjs` — external ASC/iTunes/LLM JSON is intentionally `any` at the I/O boundary. Do NOT use `eslint: { ignoreDuringBuilds }`; keep all other lint rules active at build.
+- **Dates:** all date math is native UTC (`toISOString`/`setUTCDate`/`getUTCDay`/`Date.UTC`); `date-fns` was removed as dead weight after the UTC-correctness pass.
 
 ## File Structure (decomposition)
 
@@ -98,7 +99,7 @@ Accept overwrite of the existing dir; keep `.git`, `docs/`, `.gitignore`, `.supe
 
 Run:
 ```bash
-pnpm add jsonwebtoken zod date-fns recharts @anthropic-ai/sdk next-auth@beta
+pnpm add jsonwebtoken zod recharts @anthropic-ai/sdk next-auth@beta
 pnpm add -D vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom @types/jsonwebtoken
 ```
 
