@@ -2807,12 +2807,24 @@ export function Nav() {
 - Create: `src/components/charts/LineArea.tsx`
 - Test: `tests/components/linearea.test.tsx`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```tsx
 // @vitest-environment jsdom
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
+
+vi.mock("recharts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("recharts")>();
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children }: { children: React.ReactNode }) =>
+      actual.ResponsiveContainer
+        ? <div style={{ width: 400, height: 220 }}><actual.ResponsiveContainer width={400} height={220}>{children}</actual.ResponsiveContainer></div>
+        : <div>{children}</div>,
+  };
+});
+
 import { LineArea } from "@/components/charts/LineArea";
 
 test("LineArea renders an svg for given points", () => {
@@ -2821,7 +2833,9 @@ test("LineArea renders an svg for given points", () => {
 });
 ```
 
-- [ ] **Step 2: Run** → FAIL. **Step 3: Implement `src/components/charts/LineArea.tsx`**
+The test mocks recharts `ResponsiveContainer` to a fixed size because jsdom reports 0×0 and the real container would render no chart.
+
+- [x] **Step 2: Run** → FAIL (original test without mock). **Step 3: Implement `src/components/charts/LineArea.tsx`**
 
 ```tsx
 "use client";
@@ -2847,7 +2861,7 @@ export function LineArea({ data }: { data: { day: string; value: number }[] }) {
 }
 ```
 
-- [ ] **Step 4: Run** → PASS. **Step 5: Commit** `feat: LineArea chart`.
+- [x] **Step 4: Run** → PASS. **Step 5: Commit** `feat: LineArea chart`.
 
 ### Task 8.4: Glance page
 
