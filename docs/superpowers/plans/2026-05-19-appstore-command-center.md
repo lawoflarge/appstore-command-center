@@ -1752,10 +1752,8 @@ test("buildDigest passes a compact summary and returns narrative", async () => {
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement `src/lib/intelligence/digest.ts`**
 
 ```ts
-import { parseISO, getDay } from "date-fns";
-
 export function isDigestDay(day: string): boolean {
-  return getDay(parseISO(day + "T00:00:00Z")) === 1; // Monday
+  return new Date(day + "T00:00:00Z").getUTCDay() === 1; // Monday (UTC)
 }
 
 const SYS = `You are an ASO growth analyst. Given a JSON summary, write a concise
