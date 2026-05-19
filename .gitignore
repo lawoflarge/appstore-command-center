@@ -17,3 +17,5 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 test_output*.txt
+
+archive/
