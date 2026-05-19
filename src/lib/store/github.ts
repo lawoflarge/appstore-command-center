@@ -18,8 +18,9 @@ export async function ghGetJson<T>(
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GH GET ${res.status} ${path}: ${await res.text()}`);
   const json = (await res.json()) as { content: string; sha: string };
+  const clean = json.content.replace(/\s/g, "");
   const value = JSON.parse(
-    Buffer.from(json.content, "base64").toString("utf8"),
+    Buffer.from(clean, "base64").toString("utf8"),
   ) as T;
   return { value, sha: json.sha };
 }
@@ -34,7 +35,7 @@ export async function ghPutJson(
     branch: cfg.branch,
     content: Buffer.from(JSON.stringify(value, null, 2)).toString("base64"),
   };
-  if (sha) body.sha = sha;
+  if (sha !== null) body.sha = sha;
   const res = await fetch(url, {
     method: "PUT", headers: headers(cfg), body: JSON.stringify(body),
   });
