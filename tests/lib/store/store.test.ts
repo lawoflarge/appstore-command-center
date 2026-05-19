@@ -7,7 +7,7 @@ function fakeGh() {
   return {
     fs,
     get: vi.fn(async (p: string) => fs.get(p) ?? null),
-    put: vi.fn(async (p: string, v: any, _sha: string | null) => {
+    put: vi.fn(async (p: string, v: any, _sha: string | null, _msg: string) => {
       fs.set(p, { value: v, sha: "sha" + ++n });
     }),
   };
@@ -30,4 +30,14 @@ test("upsertDailyArray merges by day idempotently", async () => {
 test("readJson returns fallback when absent", async () => {
   const store = makeStore(fakeGh() as any);
   expect(await store.readJson("missing.json", { x: 1 })).toEqual({ x: 1 });
+});
+
+test("writeJson passes null sha on create then the existing sha on update", async () => {
+  const gh = fakeGh();
+  const store = makeStore(gh as any);
+  await store.writeJson("data/c.json", { a: 1 }, "create");
+  expect(gh.put.mock.calls[0][2]).toBeNull();
+  await store.writeJson("data/c.json", { a: 2 }, "update");
+  expect(gh.put.mock.calls[1][2]).toBe("sha1");
+  expect(gh.fs.get("data/c.json")!.value).toEqual({ a: 2 });
 });

@@ -2499,6 +2499,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 
 ### Task 7.4: Config mutation API
 
+> ⚠️ Concurrency caveat (from Task 2.3 review): `store.writeJson` is read-modify-write with no lock. The cron and this config API can race on `data/config.json`, producing a GitHub 409 (SHA mismatch). In this route, wrap the `writeJson` call in a retry-on-409 (re-read + reapply the patch, up to 3 attempts) so a user config change during a cron run does not surface as a 500.
+
 **Files:**
 - Create: `src/app/api/config/route.ts`
 - Test: `tests/app/config-route.test.ts`
