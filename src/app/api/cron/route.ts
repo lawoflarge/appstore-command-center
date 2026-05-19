@@ -12,7 +12,6 @@ import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { llmFromEnv, MODELS } from "@/lib/llm/anthropic";
 import { configPath, type Config } from "@/lib/store/paths";
 
 export const maxDuration = 60;
@@ -28,7 +27,6 @@ export async function GET(req: Request): Promise<Response> {
   const e = env();
   const key = ascKeyFromEnv(e);
   const store = makeStore(ghBackendFromEnv());
-  const llm = llmFromEnv(MODELS.cheap);
   const day = todayUtc();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
 
@@ -47,7 +45,7 @@ export async function GET(req: Request): Promise<Response> {
       collectReviews: async (appId) => mapReviews(await ascFetchReviews(key, appId)()),
       collectRatings: (appId, d) => collectRatings(appId, ["de", "us", "gb", "nl", "fr"], d),
       collectKeywords: (appId, d) => collectKeywordRanks(appId, config.apps[appId]?.keywords ?? [], d),
-      runIntelligence: (args) => runIntelligence({ ...args, llm }),
+      runIntelligence: (args) => runIntelligence(args),
     },
   });
   return NextResponse.json({ ok: true, status });

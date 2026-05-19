@@ -12,9 +12,6 @@ export default async function Insights() {
     <main>
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Insights</h1>
-      {insights.digest && (
-        <Card className="mb-4 whitespace-pre-wrap text-sm">{insights.digest}</Card>
-      )}
       <div className="grid gap-4">
         {Object.entries<any>(insights.apps).map(([id, a]) => (
           <Card key={id}>

@@ -2,7 +2,7 @@
 
 ## What it is
 
-A private, single-user Next.js dashboard on Vercel that pulls App Store Connect data for every iOS app on the account daily and turns it into a layered monitoring and growth tool. A daily Vercel Cron auto-discovers all apps, runs five isolated collectors (sales, analytics, reviews, ratings, keyword-rank), and commits dated JSON to a separate private git repo used as the database — no external database required and no silent pauses. A pure-function intelligence engine plus batched Anthropic calls derives anomaly flags, funnel-leak diagnoses, and a weekly AI digest; all insights surface in an in-dashboard Insights center only (no email or push). Access is locked to one GitHub account via GitHub OAuth.
+A private, single-user Next.js dashboard on Vercel that pulls App Store Connect data for every iOS app on the account daily and turns it into a layered monitoring and growth tool. A daily Vercel Cron auto-discovers all apps, runs five isolated collectors (sales, analytics, reviews, ratings, keyword-rank), and commits dated JSON to a separate private git repo used as the database — no external database required and no silent pauses. **3 of 4 intelligence bundles**: anomaly+what-changed, ASO funnel+keyword opportunities, and month-end forecast. Review sentiment clustering and weekly AI digest were dropped to keep running costs at zero. All insights surface in an in-dashboard Insights center only (no email or push). Access is locked to one GitHub account via GitHub OAuth.
 
 **Honest caveats up front:**
 
@@ -43,7 +43,6 @@ Copy `.env.example` to `.env.local` and fill in every variable. All variables ar
 | `GITHUB_DATA_REPO` | `owner/repo` of the separate private repo used as the JSON data store | Create an empty private repo (see first-deploy runbook); format: `lawoflarge/appstore-command-center-data` |
 | `GITHUB_DATA_TOKEN` | GitHub PAT with `contents:write` on the data repo | Create a fine-grained PAT scoped only to the data repo with read + write on Contents |
 | `GITHUB_DATA_BRANCH` | Branch in the data repo where JSON is committed | `main` (or whatever the default branch of your data repo is) |
-| `ANTHROPIC_API_KEY` | Anthropic API key for the review clustering and weekly digest | console.anthropic.com → API Keys |
 | `CRON_SECRET` | Shared secret that guards the `/api/cron` route | Run `openssl rand -hex 24` |
 | `NEXTAUTH_URL` | Full public URL of the dashboard (used by Auth.js) | `http://localhost:3000` for local dev; your Vercel deployment URL in production (e.g. `https://appstore-command-center.vercel.app`) |
 
@@ -152,3 +151,4 @@ Lint posture: `@typescript-eslint/no-explicit-any` is disabled in `eslint.config
 - **Analytics funnel grows forward only.** Apple's Analytics Reports API uses ONGOING report requests with approximately 365-day retention. There is no way to backfill funnel/conversion/retention history beyond Apple's retention window. Sales history backfills ~365 days immediately.
 - **jose / next-auth edge runtime warning.** You may see a benign warning about `jose` in edge runtime on startup. The dashboard uses default JWT sessions; the JWE encryption path is unused. The warning does not affect functionality.
 - **Published Apple developer legal name.** Your Apple developer account legal name is visible in App Store listings and associated with the `.p8` key. This is an Apple platform constraint, not something this dashboard controls.
+- **Running cost: $0.** Removed the Anthropic-dependent bundles to ensure the project costs nothing to run. Reviews are still collected and listed; they just aren't AI-clustered.

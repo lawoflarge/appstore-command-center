@@ -59,10 +59,8 @@ export async function runDailyCollection(input: {
     let reviews: Review[] = [];
     try { reviews = await deps.collectReviews(id); mark(id, "reviews", true); }
     catch (e: any) { mark(id, "reviews", false, String(e?.message ?? e)); }
-    const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
-    const known = new Set(prevReviews.map((r) => r.id));
-    const newReviews = reviews.filter((r) => !known.has(r.id));
     if (reviews.length) {
+      const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
       const map = new Map(prevReviews.map((r) => [r.id, r]));
       for (const r of reviews) map.set(r.id, r);
       await store.writeJson(reviewsPath(id), [...map.values()], `data: reviews ${id}`);
@@ -83,7 +81,7 @@ export async function runDailyCollection(input: {
       appId: id, name: a.name,
       downloads: [], funnelToday: { impressions: 0, pageViews: 0, downloads: 0 },
       funnelBaseline: { impressions: 0, pageViews: 0, downloads: 0 },
-      keywords: [], releases: a.releases, newReviews,
+      keywords: [], releases: a.releases,
     });
   }
 

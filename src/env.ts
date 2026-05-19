@@ -12,7 +12,6 @@ const schema = z.object({
   GITHUB_DATA_REPO: z.string().regex(/^[^/]+\/[^/]+$/),
   GITHUB_DATA_TOKEN: z.string().min(1),
   GITHUB_DATA_BRANCH: z.string().default("main"),
-  ANTHROPIC_API_KEY: z.string().min(1),
   CRON_SECRET: z.string().min(1),
 });
 

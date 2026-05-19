@@ -6,7 +6,7 @@
 
 **Architecture:** A daily Vercel Cron runs an orchestrator that auto-discovers every app on the Apple account, runs five isolated collectors (sales, analytics, reviews, ratings, keyword-rank), and commits partitioned JSON to the repo via the GitHub Contents API. A pure-function intelligence engine (plus batched Anthropic calls) turns the series into insights. A GitHub-OAuth-locked Next.js App Router UI reads the committed JSON through a single data-access layer and renders six screens.
 
-**Tech Stack:** Next.js 15 (App Router, TypeScript), pnpm, Vitest, Tailwind CSS v4, Auth.js v5 (GitHub), Recharts, `jsonwebtoken`, `@anthropic-ai/sdk`, `zod`, Node `zlib`, GitHub REST Contents API.
+**Tech Stack:** Next.js 15 (App Router, TypeScript), pnpm, Vitest, Tailwind CSS v4, Auth.js v5 (GitHub), Recharts, `jsonwebtoken`, `zod`, Node `zlib`, GitHub REST Contents API.
 
 ---
 
@@ -27,6 +27,7 @@ Source: `docs/superpowers/specs/2026-05-19-appstore-command-center-design.md`. R
 - Run all commands from the project root `/path/to/appstore-command-center`.
 - **Lint:** `@typescript-eslint/no-explicit-any` is disabled in `eslint.config.mjs` — external ASC/iTunes/LLM JSON is intentionally `any` at the I/O boundary. Do NOT use `eslint: { ignoreDuringBuilds }`; keep all other lint rules active at build.
 - **Dates:** all date math is native UTC (`toISOString`/`setUTCDate`/`getUTCDay`/`Date.UTC`); `date-fns` was removed as dead weight after the UTC-correctness pass.
+- **Zero running cost:** the Anthropic-dependent features (review sentiment clustering, weekly digest) were removed 2026-05-19 to keep the project free to run; 3 of 4 intelligence bundles remain (anomaly, ASO/funnel/keywords, forecast).
 
 ## File Structure (decomposition)
 
@@ -99,7 +100,7 @@ Accept overwrite of the existing dir; keep `.git`, `docs/`, `.gitignore`, `.supe
 
 Run:
 ```bash
-pnpm add jsonwebtoken zod recharts @anthropic-ai/sdk next-auth@beta
+pnpm add jsonwebtoken zod recharts next-auth@beta
 pnpm add -D vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom @types/jsonwebtoken
 ```
 
@@ -1612,6 +1613,8 @@ export function forecastMonth(series: Point[], asOf: string): Forecast {
 
 ### Task 4.6: Anthropic client with prompt caching
 
+> ⛔ Removed 2026-05-19 for zero-cost operation. See conventions.
+
 **Files:**
 - Create: `src/lib/llm/anthropic.ts`
 - Test: `tests/lib/llm/anthropic.test.ts`
@@ -1664,6 +1667,8 @@ export const MODELS = { cheap: "claude-haiku-4-5", smart: "claude-sonnet-4-6" };
 - [ ] **Step 4: Run** → PASS. **Step 5: Commit** `feat: Anthropic client with prompt caching`.
 
 ### Task 4.7: Review sentiment clustering
+
+> ⛔ Removed 2026-05-19 for zero-cost operation. See conventions.
 
 **Files:**
 - Create: `src/lib/intelligence/sentiment.ts`
@@ -1728,6 +1733,8 @@ export async function clusterReviews(
 
 ### Task 4.8: Weekly digest
 
+> ⛔ Removed 2026-05-19 for zero-cost operation. See conventions.
+
 **Files:**
 - Create: `src/lib/intelligence/digest.ts`
 - Test: `tests/lib/intelligence/digest.test.ts`
@@ -1783,23 +1790,24 @@ Produces the `insights.json` shape consumed by the UI.
 - [ ] **Step 1: Failing test**
 
 ```ts
-import { test, expect, vi } from "vitest";
+import { test, expect } from "vitest";
 import { runIntelligence } from "@/lib/intelligence/engine";
 
 test("runIntelligence aggregates anomalies + opportunities + forecast per app", async () => {
-  const flat = (v: number) => ["2026-04-20","2026-04-27","2026-05-04","2026-05-11","2026-05-18"].map((day) => ({ day, value: v }));
   const insights = await runIntelligence({
     day: "2026-05-18",
     apps: [{
       appId: "1", name: "A",
-      downloads: [...flat(100).slice(0,4), { day: "2026-05-18", value: 10 }],
+      downloads: [
+        { day: "2026-04-20", value: 100 }, { day: "2026-04-27", value: 100 },
+        { day: "2026-05-04", value: 100 }, { day: "2026-05-11", value: 100 },
+        { day: "2026-05-18", value: 10 },
+      ],
       funnelToday: { impressions: 1000, pageViews: 300, downloads: 30 },
       funnelBaseline: { impressions: 1000, pageViews: 300, downloads: 90 },
       keywords: [{ day: "2026-05-18", term: "k", country: "de", rank: 10 }],
       releases: [],
-      newReviews: [],
     }],
-    llm: { complete: vi.fn(async () => '{"themes":[]}') } as any,
   });
   const a = insights.apps["1"];
   expect(a.anomaly?.direction).toBe("drop");
@@ -1817,10 +1825,8 @@ import { detectAnomalies, type Anomaly } from "./anomaly";
 import { diagnoseFunnel, type FunnelStage, type FunnelDiagnosis } from "./funnel";
 import { keywordOpportunities, type Opportunity } from "./keywords";
 import { forecastMonth, type Forecast } from "./forecast";
-import { clusterReviews, type ClusterResult } from "./sentiment";
-import { buildDigest, isDigestDay } from "./digest";
 import type { Point } from "./baseline";
-import type { KeywordRank, Review } from "@/lib/store/paths";
+import type { KeywordRank } from "@/lib/store/paths";
 
 export interface AppInput {
   appId: string; name: string;
@@ -1828,7 +1834,6 @@ export interface AppInput {
   funnelToday: FunnelStage; funnelBaseline: FunnelStage;
   keywords: KeywordRank[];
   releases: { version: string; date: string }[];
-  newReviews: Review[];
 }
 export interface AppInsight {
   name: string;
@@ -1836,18 +1841,15 @@ export interface AppInsight {
   funnel: FunnelDiagnosis;
   opportunities: Opportunity[];
   forecast: Forecast;
-  reviewThemes: ClusterResult;
 }
 export interface Insights {
   generatedAt: string;
   apps: Record<string, AppInsight>;
-  digest?: string;
 }
 
 export async function runIntelligence(input: {
   day: string;
   apps: AppInput[];
-  llm: { complete: (s: string, u: string) => Promise<string> };
 }): Promise<Insights> {
   const apps: Record<string, AppInsight> = {};
   for (const a of input.apps) {
@@ -1857,20 +1859,9 @@ export async function runIntelligence(input: {
       funnel: diagnoseFunnel(a.funnelToday, a.funnelBaseline),
       opportunities: keywordOpportunities(a.keywords, input.day),
       forecast: forecastMonth(a.downloads, input.day),
-      reviewThemes: await clusterReviews(input.llm, a.newReviews),
     };
   }
-  const out: Insights = { generatedAt: input.day, apps };
-  if (isDigestDay(input.day)) {
-    out.digest = await buildDigest(input.llm, {
-      day: input.day,
-      apps: Object.entries(apps).map(([id, v]) => ({
-        id, name: v.name, anomaly: v.anomaly, funnel: v.funnel.leak,
-        opportunities: v.opportunities.slice(0, 5), forecast: v.forecast,
-      })),
-    });
-  }
-  return out;
+  return { generatedAt: input.day, apps };
 }
 ```
 
@@ -2254,7 +2245,6 @@ import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { llmFromEnv, MODELS } from "@/lib/llm/anthropic";
 import { configPath, type Config } from "@/lib/store/paths";
 
 export const maxDuration = 60;
@@ -2270,7 +2260,6 @@ export async function GET(req: Request): Promise<Response> {
   const e = env();
   const key = ascKeyFromEnv(e);
   const store = makeStore(ghBackendFromEnv());
-  const llm = llmFromEnv(MODELS.cheap);
   const day = todayUtc();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
 
@@ -2289,7 +2278,7 @@ export async function GET(req: Request): Promise<Response> {
       collectReviews: async (appId) => mapReviews(await ascFetchReviews(key, appId)()),
       collectRatings: (appId, d) => collectRatings(appId, ["de", "us", "gb", "nl", "fr"], d),
       collectKeywords: (appId, d) => collectKeywordRanks(appId, config.apps[appId]?.keywords ?? [], d),
-      runIntelligence: (args) => runIntelligence({ ...args, llm }),
+      runIntelligence: (args) => runIntelligence(args),
     },
   });
   return NextResponse.json({ ok: true, status });
