@@ -1,0 +1,97 @@
+import {
+  salesPath, analyticsPath, ratingsPath, keywordsPath, reviewsPath,
+  appMetaPath, configPath, insightsPath, runStatusPath,
+  type AppMeta, type Config, type RunStatus, type Review,
+} from "@/lib/store/paths";
+import type { Store } from "@/lib/store/store";
+
+export interface OrchestratorDeps {
+  discoverApps: () => Promise<AppMeta[]>;
+  collectSales: (appIds: string[], day: string) => Promise<Record<string, any>>;
+  collectAnalytics: (appId: string) => Promise<Record<string, any>>;
+  collectReviews: (appId: string) => Promise<Review[]>;
+  collectRatings: (appId: string, day: string) => Promise<any>;
+  collectKeywords: (appId: string, day: string) => Promise<any[]>;
+  runIntelligence: (args: { day: string; apps: any[]; }) => Promise<any>;
+}
+
+export async function runDailyCollection(input: {
+  day: string; store: Store; deps: OrchestratorDeps;
+}): Promise<RunStatus> {
+  const { day, store, deps } = input;
+  const apps = await deps.discoverApps();
+  const config = await store.readJson<Config>(configPath(), { apps: {} });
+
+  const status: RunStatus = {
+    lastRun: new Date().toISOString(),
+    lastSuccess: "",
+    perApp: {},
+  };
+  const mark = (id: string, k: string, ok: boolean, error?: string) => {
+    (status.perApp[id] ??= {})[k] = { ok, at: new Date().toISOString(), ...(error ? { error } : {}) };
+  };
+
+  for (const a of apps) {
+    const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
+    const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
+    await store.writeJson(appMetaPath(a.appId), merged, `chore(data): meta ${a.appId}`);
+  }
+
+  const appIds = apps.map((a) => a.appId);
+  let salesByApp: Record<string, any> = {};
+  try { salesByApp = await deps.collectSales(appIds, day); appIds.forEach((id) => mark(id, "sales", true)); }
+  catch (e: any) { appIds.forEach((id) => mark(id, "sales", false, String(e?.message ?? e))); }
+
+  const intelInputs: any[] = [];
+  for (const a of apps) {
+    const id = a.appId;
+    if (salesByApp[id]) await store.upsertDailyArray(salesPath(id, day), [salesByApp[id]], `data: sales ${id} ${day}`);
+
+    let analyticsDays: Record<string, any> = {};
+    try { analyticsDays = await deps.collectAnalytics(id); mark(id, "analytics", true); }
+    catch (e: any) { mark(id, "analytics", false, String(e?.message ?? e)); }
+    const aDays = Object.values(analyticsDays);
+    if (aDays.length) await store.upsertDailyArray(analyticsPath(id, day), aDays as any[], `data: analytics ${id}`);
+
+    let reviews: Review[] = [];
+    try { reviews = await deps.collectReviews(id); mark(id, "reviews", true); }
+    catch (e: any) { mark(id, "reviews", false, String(e?.message ?? e)); }
+    const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
+    const known = new Set(prevReviews.map((r) => r.id));
+    const newReviews = reviews.filter((r) => !known.has(r.id));
+    if (reviews.length) {
+      const map = new Map(prevReviews.map((r) => [r.id, r]));
+      for (const r of reviews) map.set(r.id, r);
+      await store.writeJson(reviewsPath(id), [...map.values()], `data: reviews ${id}`);
+    }
+
+    try { const rp = await deps.collectRatings(id, day); await store.upsertDailyArray(ratingsPath(id, day), [rp], `data: ratings ${id} ${day}`); mark(id, "ratings", true); }
+    catch (e: any) { mark(id, "ratings", false, String(e?.message ?? e)); }
+
+    try {
+      const watch = config.apps[id]?.keywords ?? [];
+      const kr = await deps.collectKeywords(id, day);
+      if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
+      void watch;
+      mark(id, "keywords", true);
+    } catch (e: any) { mark(id, "keywords", false, String(e?.message ?? e)); }
+
+    intelInputs.push({
+      appId: id, name: a.name,
+      downloads: [], funnelToday: { impressions: 0, pageViews: 0, downloads: 0 },
+      funnelBaseline: { impressions: 0, pageViews: 0, downloads: 0 },
+      keywords: [], releases: a.releases, newReviews,
+    });
+  }
+
+  try {
+    const insights = await deps.runIntelligence({ day, apps: intelInputs });
+    await store.writeJson(insightsPath(), insights, `data: insights ${day}`);
+  } catch (e: any) {
+    apps.forEach((a) => mark(a.appId, "intelligence", false, String(e?.message ?? e)));
+  }
+
+  status.lastSuccess = new Date().toISOString();
+  await store.writeJson(runStatusPath(), status, `data: run-status ${day}`);
+  return status;
+}
