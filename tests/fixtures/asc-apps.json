@@ -1,0 +1,4 @@
+[
+  { "id": "6767226388", "attributes": { "name": "Example App One", "bundleId": "com.example.appone", "sku": "EXAMPLE1" } },
+  { "id": "6480000000", "attributes": { "name": "Example App Two", "bundleId": "com.example.apptwo", "sku": "EXAMPLE2" } }
+]
