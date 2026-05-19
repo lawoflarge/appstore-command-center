@@ -2651,12 +2651,27 @@ export async function POST(req: Request) {
   if (!session?.user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const patch = await req.json();
   const store = makeStore(ghBackendFromEnv());
-  const cfg = await store.readJson<Config>(configPath(), { apps: {} });
-  const next = applyConfigPatch(cfg, patch);
-  await store.writeJson(configPath(), next, `chore(config): update ${patch.appId}`);
-  return NextResponse.json(next);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cfg = await store.readJson<Config>(configPath(), { apps: {} });
+    const next = applyConfigPatch(cfg, patch);
+    try {
+      await store.writeJson(configPath(), next, `chore(config): update ${patch.appId}`);
+      return NextResponse.json(next);
+    } catch (e) {
+      lastErr = e;
+      if (!String((e as { message?: string })?.message ?? e).includes("GH PUT 409")) throw e;
+      // SHA conflict: the cron raced this write — re-read and reapply the patch
+    }
+  }
+  return NextResponse.json(
+    { error: "config write conflict, please retry", detail: String((lastErr as { message?: string })?.message ?? lastErr) },
+    { status: 409 },
+  );
 }
 ```
+
+The POST wraps the write in a 3-attempt retry-on-`GH PUT 409` (re-read + reapply the patch) per the Task 2.3 concurrency caveat, so a config change racing the cron does not 500.
 
 - [ ] **Step 5: Run** → PASS. **Step 6: Commit** `feat: config mutation API`.
 
