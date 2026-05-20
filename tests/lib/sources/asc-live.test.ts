@@ -9,19 +9,24 @@ afterEach(() => {
 test("fetchLatestAnalyticsCsv walks reports→instances→segments, sorts by processingDate, concatenates", async () => {
   vi.resetModules();
   const key = { keyId: "k", issuerId: "i", privateKey: "p" };
-  // Return instances in non-sorted order — code must pick the newest by processingDate
-  const calls: Record<string, any> = {
+  // Return instances in non-sorted order — code must pick the newest by processingDate.
+  // Instances now come from ascGetJson (one page, no pagination); segments still paginate.
+  const pageCalls: Record<string, any> = {
+    "/v1/analyticsReports/rep1/instances?limit=200": {
+      data: [
+        { id: "inst_old", attributes: { processingDate: "2026-05-10" } },
+        { id: "inst_new", attributes: { processingDate: "2026-05-18" } },
+      ],
+    },
+  };
+  const allPagesCalls: Record<string, any> = {
     "/v1/analyticsReportRequests/req1/reports?limit=200": [{ id: "rep1", attributes: { category: "APP_STORE_ENGAGEMENT" } }],
-    "/v1/analyticsReports/rep1/instances?limit=200": [
-      { id: "inst_old", attributes: { processingDate: "2026-05-10" } },
-      { id: "inst_new", attributes: { processingDate: "2026-05-18" } },
-    ],
     "/v1/analyticsReportInstances/inst_new/segments?limit=200": [{ attributes: { url: "https://seg/new" } }],
     "/v1/analyticsReportInstances/inst_old/segments?limit=200": [{ attributes: { url: "https://seg/old" } }],
   };
   vi.doMock("@/lib/asc/client", () => ({
-    ascGetAllPages: vi.fn(async (_k: unknown, u: string) => calls[u] ?? []),
-    ascGetJson: vi.fn(),
+    ascGetAllPages: vi.fn(async (_k: unknown, u: string) => allPagesCalls[u] ?? []),
+    ascGetJson: vi.fn(async (_k: unknown, u: string) => pageCalls[u] ?? { data: [] }),
   }));
   const fetchMock = vi.fn(async (url: string) => {
     const body = url.endsWith("/new") ? "Date,App Units\n2026-05-18,5\n" : "Date,App Units\n2026-05-10,1\n";

@@ -1,4 +1,4 @@
-import { ascGetAllPages } from "@/lib/asc/client";
+import { ascGetAllPages, ascGetJson as ascGetJsonImpl } from "@/lib/asc/client";
 import type { AscKey } from "@/lib/asc/jwt";
 import { gunzipSync } from "node:zlib";
 
@@ -32,10 +32,12 @@ export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): P
   const reports = await ascGetAllPages(key, `/v1/analyticsReportRequests/${requestId}/reports?limit=200`);
   let csv = "";
   for (const rep of reports) {
-    // ASC rejects `sort` on this endpoint (PARAMETER_ERROR.ILLEGAL); sort client-side.
-    const instances = await ascGetAllPages(
+    // ASC rejects `sort` on this endpoint (PARAMETER_ERROR.ILLEGAL). Don't paginate — the
+    // single page can hold ~200 historical instances and walking all pages blew the 60s
+    // Hobby function limit. Fetch ONE page only, then sort client-side and take the newest.
+    const page = await ascGetJsonImpl<{ data: any[] }>(
       key, `/v1/analyticsReports/${rep.id}/instances?limit=200`);
-    instances.sort((a: any, b: any) =>
+    const instances = (page.data ?? []).slice().sort((a: any, b: any) =>
       String(b.attributes?.processingDate ?? "").localeCompare(String(a.attributes?.processingDate ?? "")));
     const latest = instances[0];
     if (!latest) continue;
