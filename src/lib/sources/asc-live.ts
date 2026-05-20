@@ -32,8 +32,11 @@ export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): P
   const reports = await ascGetAllPages(key, `/v1/analyticsReportRequests/${requestId}/reports?limit=200`);
   let csv = "";
   for (const rep of reports) {
+    // ASC rejects `sort` on this endpoint (PARAMETER_ERROR.ILLEGAL); sort client-side.
     const instances = await ascGetAllPages(
-      key, `/v1/analyticsReports/${rep.id}/instances?limit=200&sort=-processingDate`);
+      key, `/v1/analyticsReports/${rep.id}/instances?limit=200`);
+    instances.sort((a: any, b: any) =>
+      String(b.attributes?.processingDate ?? "").localeCompare(String(a.attributes?.processingDate ?? "")));
     const latest = instances[0];
     if (!latest) continue;
     const segments = await ascGetAllPages(
