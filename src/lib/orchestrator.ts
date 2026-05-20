@@ -45,8 +45,10 @@ export async function runDailyCollection(input: {
   try { salesByApp = await deps.collectSales(appIds, day); appIds.forEach((id) => mark(id, "sales", true)); }
   catch (e: any) { appIds.forEach((id) => mark(id, "sales", false, String(e?.message ?? e))); }
 
-  const intelInputs: any[] = [];
-  for (const a of apps) {
+  // Per-app work runs in parallel — each app writes to distinct paths so there's no
+  // contention, and the GitHub Contents API handles concurrent commits. Serial loop
+  // blew the 60s Hobby function cap once analytics started doing real CSV downloads.
+  const perApp = apps.map(async (a) => {
     const id = a.appId;
     if (salesByApp[id]) await store.upsertDailyArray(salesPath(id, day), [salesByApp[id]], `data: sales ${id} ${day}`);
 
@@ -76,14 +78,15 @@ export async function runDailyCollection(input: {
       void watch; // watchlist is resolved from config by the cron route (Task 5.3) and passed into collectKeywords; read here only to keep config wired for a future per-orchestrator use
       mark(id, "keywords", true);
     } catch (e: any) { mark(id, "keywords", false, String(e?.message ?? e)); }
+  });
+  await Promise.all(perApp);
 
-    intelInputs.push({
-      appId: id, name: a.name,
-      downloads: [], funnelToday: { impressions: 0, pageViews: 0, downloads: 0 },
-      funnelBaseline: { impressions: 0, pageViews: 0, downloads: 0 },
-      keywords: [], releases: a.releases,
-    });
-  }
+  const intelInputs = apps.map((a) => ({
+    appId: a.appId, name: a.name,
+    downloads: [], funnelToday: { impressions: 0, pageViews: 0, downloads: 0 },
+    funnelBaseline: { impressions: 0, pageViews: 0, downloads: 0 },
+    keywords: [], releases: a.releases,
+  }));
 
   try {
     const insights = await deps.runIntelligence({ day, apps: intelInputs });
