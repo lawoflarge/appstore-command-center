@@ -1,5 +1,5 @@
 import Link from "next/link";
-const items = [["/", "Glance"], ["/portfolio", "Portfolio"], ["/aso", "ASO"], ["/reviews", "Reviews"], ["/insights", "Insights"]];
+const items = [["/", "Glance"], ["/portfolio", "Portfolio"], ["/aso", "ASO"], ["/reviews", "Reviews"], ["/insights", "Insights"], ["/settings", "Settings"]];
 export function Nav() {
   return (
     <nav className="glass mb-6 flex gap-1 p-2 text-sm">

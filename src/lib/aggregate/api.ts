@@ -1,5 +1,5 @@
 import type { Store } from "@/lib/store/store";
-import { salesPath, appMetaPath, insightsPath, ratingsPath, configPath, type SalesDay, type AppMeta, type RatingPoint, type Config } from "@/lib/store/paths";
+import { salesPath, appMetaPath, insightsPath, ratingsPath, configPath, runStatusPath, type SalesDay, type AppMeta, type RatingPoint, type Config, type RunStatus } from "@/lib/store/paths";
 import { totals } from "./downloads";
 
 export async function buildGlance(store: Store, appIds: string[], month: string) {
@@ -29,9 +29,18 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
   return { apps, blendedRating: { avg: ratingCount ? ratingWeighted / ratingCount : 0, count: ratingCount } };
 }
 
+/**
+ * Default visibility = "all discovered, none hidden". Discovered apps come from
+ * run-status (every cron writes it). Config is an overlay for hide/archive/keywords;
+ * an empty config no longer means "no apps", which was the source of the spurious
+ * "No data yet" state on first deploy.
+ */
 export async function visibleAppIds(store: Store): Promise<string[]> {
   const cfg = await store.readJson<Config>(configPath(), { apps: {} });
-  return Object.keys(cfg.apps).length
-    ? Object.entries(cfg.apps).filter(([, v]) => !v.hidden && !v.archived).map(([k]) => k)
-    : [];
+  const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
+  const discovered = status ? Object.keys(status.perApp) : [];
+  return discovered.filter((id) => {
+    const c = cfg.apps[id];
+    return !c || (!c.hidden && !c.archived);
+  });
 }

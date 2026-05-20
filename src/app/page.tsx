@@ -3,17 +3,31 @@ import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { buildGlance, visibleAppIds } from "@/lib/aggregate/api";
+import { runStatusPath, type RunStatus } from "@/lib/store/paths";
 import { todayUtc } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
+function fmtAgo(iso: string): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) return `${Math.max(1, Math.floor(ms / 60_000))} min ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 export default async function Glance() {
   const store = makeStore(ghBackendFromEnv());
+  const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
   const ids = await visibleAppIds(store);
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
   const rating = g.blendedRating;
+  const lastRunCopy = status
+    ? `Last cron ${fmtAgo(status.lastRun)} · ${ids.length} app${ids.length === 1 ? "" : "s"} discovered`
+    : "First cron hasn't run. Either wait for 06:00 UTC or trigger /api/cron with the secret.";
   return (
     <main>
       <Nav />
@@ -24,6 +38,7 @@ export default async function Glance() {
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
+      <p className="mb-4 text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
       <div className="grid gap-4">
         {g.apps.map((a) => (
           <Card key={a.appId}>
@@ -38,7 +53,19 @@ export default async function Glance() {
             )}
           </Card>
         ))}
-        {g.apps.length === 0 && <Card>No data yet. The first cron run will populate this.</Card>}
+        {g.apps.length === 0 && status && (
+          <Card>
+            <div className="text-sm">
+              Cron ran successfully but the data is still <strong>all zeros</strong>. This is expected
+              on day-0: Apple&apos;s Sales/Analytics reports have a ~24h publication lag, ratings
+              update as users rate. Tomorrow&apos;s 06:00 UTC run will pick up yesterday&apos;s
+              numbers.
+            </div>
+          </Card>
+        )}
+        {g.apps.length === 0 && !status && (
+          <Card>No cron run yet. Trigger <code>/api/cron</code> with the bearer secret or wait until 06:00 UTC.</Card>
+        )}
       </div>
     </main>
   );
