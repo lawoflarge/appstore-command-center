@@ -2,6 +2,7 @@ import type { AnalyticsDay } from "@/lib/store/paths";
 
 export function parseCsv(text: string): Record<string, string>[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 0) return []; // empty CSV (no analytics rows yet)
   const header = splitCsvLine(lines[0]);
   return lines.slice(1).map((l) => {
     const cells = splitCsvLine(l);
