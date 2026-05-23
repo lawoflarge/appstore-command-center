@@ -19,3 +19,5 @@ next-env.d.ts
 test_output*.txt
 
 archive/
+.vercel
+.env*
