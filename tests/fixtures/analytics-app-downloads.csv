@@ -1,0 +1,5 @@
+Date	App Name	App Apple Identifier	Download Type	App Version	Device	Platform Version	Source Type	Page Type	Pre-Order	Territory	Counts
+2026-05-18	Test App	999000111	First-time download	1.0.0	iPhone	iOS 18.5	App Store search	No page		US	80
+2026-05-18	Test App	999000111	First-time download	1.0.0	iPad	iOS 17.4	App Store browse	Product page		DE	20
+2026-05-18	Test App	999000111	Redownload	1.0.0	iPhone	iOS 18.5	App Store search	No page		US	5
+2026-05-19	Test App	999000111	First-time download	1.0.0	iPhone	iOS 18.5	App Store search	No page		US	60

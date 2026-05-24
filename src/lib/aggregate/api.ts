@@ -1,6 +1,6 @@
 import type { Store } from "@/lib/store/store";
-import { salesPath, appMetaPath, insightsPath, ratingsPath, configPath, runStatusPath, type SalesDay, type AppMeta, type RatingPoint, type Config, type RunStatus } from "@/lib/store/paths";
-import { totals } from "./downloads";
+import { salesPath, analyticsPath, appMetaPath, insightsPath, ratingsPath, configPath, runStatusPath, type SalesDay, type AnalyticsDay, type AppMeta, type RatingPoint, type Config, type RunStatus } from "@/lib/store/paths";
+import { totals, analyticsTotals } from "./downloads";
 
 export async function buildGlance(store: Store, appIds: string[], month: string) {
   const insights = await store.readJson<any>(insightsPath(), { apps: {} });
@@ -10,8 +10,13 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
   for (const id of appIds) {
     const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
     if (!meta || meta.hidden || meta.archived) continue;
+    const analytics = await store.readJson<AnalyticsDay[]>(analyticsPath(id, month + "-01"), []);
     const sales = await store.readJson<SalesDay[]>(salesPath(id, month + "-01"), []);
-    const day = sales.at(-1)?.day ?? "";
+    // Prefer analytics — it matches ASC "Analytics → Overview". Sales TSV is the
+    // finance report; for free apps it's commonly empty and always lags ~24h.
+    const useAnalytics = analytics.length > 0;
+    const day = (useAnalytics ? analytics : sales).at(-1)?.day ?? "";
+    const t = useAnalytics ? analyticsTotals(analytics, day) : totals(sales, day);
     const ratings = await store.readJson<RatingPoint[]>(ratingsPath(id, month + "-01"), []);
     const lastRating = ratings.at(-1) ?? null;
     if (lastRating && lastRating.count > 0) {
@@ -21,7 +26,7 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
     apps.push({
       appId: id,
       name: meta.name,
-      ...totals(sales, day),
+      ...t,
       rating: lastRating ? { avg: lastRating.avg, count: lastRating.count } : null,
       anomaly: insights.apps?.[id]?.anomaly ?? null,
     });
