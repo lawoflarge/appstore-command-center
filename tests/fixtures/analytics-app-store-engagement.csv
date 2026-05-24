@@ -1,3 +1,7 @@
-Date,Impressions,Product Page Views,App Units,Sessions,Active Devices,Deletions,Source Type
-2026-05-18,1200,300,80,500,420,10,App Store Search
-2026-05-18,400,90,20,140,120,3,App Store Browse
+Date	App Name	App Apple Identifier	Event	Page Type	Source Type	Engagement Type	Device	Platform Version	Territory	Counts	Unique Counts
+2026-05-18	Test App	999000111	Impression	No page	App Store search		iPhone	iOS 18.5	US	1200	600
+2026-05-18	Test App	999000111	Impression	No page	App Store browse		iPad	iOS 17.4	DE	400	200
+2026-05-18	Test App	999000111	Page view	Product page	App Store search		iPhone	iOS 18.5	US	300	180
+2026-05-18	Test App	999000111	Page view	Product page	App Store browse		Desktop	macOS 14.4	GB	90	60
+2026-05-19	Test App	999000111	Impression	No page	App Store search		iPhone	iOS 18.5	US	800	400
+2026-05-19	Test App	999000111	Page view	Product page	App Store search		iPhone	iOS 18.5	US	200	120

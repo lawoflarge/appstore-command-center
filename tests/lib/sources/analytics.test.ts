@@ -1,17 +1,49 @@
 import { test, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { ensureOngoingRequest, parseAnalyticsCsv } from "@/lib/sources/analytics";
+import { ensureOngoingRequest, parseAnalyticsCsv, parseAnalyticsCsvs } from "@/lib/sources/analytics";
 
-const csv = readFileSync(__dirname + "/../../fixtures/analytics-app-store-engagement.csv", "utf8");
+const engagementCsv = readFileSync(__dirname + "/../../fixtures/analytics-app-store-engagement.csv", "utf8");
+const downloadsCsv = readFileSync(__dirname + "/../../fixtures/analytics-app-downloads.csv", "utf8");
 
-test("parseAnalyticsCsv folds rows into one AnalyticsDay with bySource", () => {
-  const day = parseAnalyticsCsv(csv);
-  expect(day["2026-05-18"]).toEqual({
+test("parseAnalyticsCsv handles long-format engagement CSV (impressions + page views)", () => {
+  const days = parseAnalyticsCsv(engagementCsv);
+  expect(days["2026-05-18"]).toMatchObject({
     day: "2026-05-18",
-    impressions: 1600, pageViews: 390, downloads: 100,
-    sessions: 640, activeDevices: 540, deletions: 13, crashes: 0,
-    bySource: { "App Store Search": 80, "App Store Browse": 20 },
+    impressions: 1600,
+    pageViews: 390,
+    downloads: 0,
   });
+  expect(days["2026-05-19"]).toMatchObject({
+    day: "2026-05-19", impressions: 800, pageViews: 200, downloads: 0,
+  });
+});
+
+test("parseAnalyticsCsv handles long-format downloads CSV (First-time only, splits bySource)", () => {
+  const days = parseAnalyticsCsv(downloadsCsv);
+  expect(days["2026-05-18"]).toMatchObject({
+    day: "2026-05-18",
+    downloads: 100,
+    impressions: 0,
+    pageViews: 0,
+    bySource: { "App Store search": 80, "App Store browse": 20 },
+  });
+  expect(days["2026-05-19"].downloads).toBe(60);
+});
+
+test("parseAnalyticsCsvs merges multiple chunks into one AnalyticsDay per date", () => {
+  const days = parseAnalyticsCsvs([engagementCsv, downloadsCsv]);
+  expect(days["2026-05-18"]).toMatchObject({
+    day: "2026-05-18",
+    impressions: 1600,
+    pageViews: 390,
+    downloads: 100,
+    bySource: { "App Store search": 80, "App Store browse": 20 },
+  });
+});
+
+test("parseAnalyticsCsvs ignores empty chunks and unrecognized schemas", () => {
+  const days = parseAnalyticsCsvs(["", "\n\n", "Date,Foo\n2026-05-18,1"]);
+  expect(Object.keys(days)).toEqual([]);
 });
 
 test("ensureOngoingRequest creates when none exist", async () => {

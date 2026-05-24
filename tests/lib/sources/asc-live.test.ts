@@ -6,38 +6,53 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("fetchLatestAnalyticsCsv walks reports→instances→segments, sorts by processingDate, concatenates", async () => {
+test("fetchLatestAnalyticsCsv filters reports by name and fetches recent DAILY instances", async () => {
   vi.resetModules();
   const key = { keyId: "k", issuerId: "i", privateKey: "p" };
-  // Return instances in non-sorted order — code must pick the newest by processingDate.
-  // Instances now come from ascGetJson (one page, no pagination); segments still paginate.
+
   const pageCalls: Record<string, any> = {
-    "/v1/analyticsReports/rep1/instances?limit=200": {
+    "/v1/analyticsReports/rep_dl/instances?limit=200": {
       data: [
-        { id: "inst_old", attributes: { processingDate: "2026-05-10" } },
-        { id: "inst_new", attributes: { processingDate: "2026-05-18" } },
+        { id: "dl_new",  attributes: { processingDate: "2026-05-18", granularity: "DAILY" } },
+        { id: "dl_old",  attributes: { processingDate: "2026-05-17", granularity: "DAILY" } },
+        { id: "dl_week", attributes: { processingDate: "2026-05-18", granularity: "WEEKLY" } },
       ],
+    },
+    "/v1/analyticsReports/rep_eng/instances?limit=200": {
+      data: [{ id: "eng_new", attributes: { processingDate: "2026-05-18", granularity: "DAILY" } }],
     },
   };
   const allPagesCalls: Record<string, any> = {
-    "/v1/analyticsReportRequests/req1/reports?limit=200": [{ id: "rep1", attributes: { category: "APP_STORE_ENGAGEMENT" } }],
-    "/v1/analyticsReportInstances/inst_new/segments?limit=200": [{ attributes: { url: "https://seg/new" } }],
-    "/v1/analyticsReportInstances/inst_old/segments?limit=200": [{ attributes: { url: "https://seg/old" } }],
+    "/v1/analyticsReportRequests/req1/reports?limit=200": [
+      { id: "rep_dl",    attributes: { name: "App Downloads Standard", category: "COMMERCE" } },
+      { id: "rep_eng",   attributes: { name: "App Store Discovery and Engagement Standard", category: "APP_STORE_ENGAGEMENT" } },
+      { id: "rep_noise", attributes: { name: "Bluetooth LE Scans", category: "FRAMEWORK_USAGE" } },
+    ],
+    "/v1/analyticsReportInstances/dl_new/segments?limit=200":  [{ attributes: { url: "https://seg/dl_new" } }],
+    "/v1/analyticsReportInstances/dl_old/segments?limit=200":  [{ attributes: { url: "https://seg/dl_old" } }],
+    "/v1/analyticsReportInstances/eng_new/segments?limit=200": [{ attributes: { url: "https://seg/eng_new" } }],
   };
   vi.doMock("@/lib/asc/client", () => ({
     ascGetAllPages: vi.fn(async (_k: unknown, u: string) => allPagesCalls[u] ?? []),
     ascGetJson: vi.fn(async (_k: unknown, u: string) => pageCalls[u] ?? { data: [] }),
   }));
-  const fetchMock = vi.fn(async (url: string) => {
-    const body = url.endsWith("/new") ? "Date,App Units\n2026-05-18,5\n" : "Date,App Units\n2026-05-10,1\n";
-    return new Response(body, { status: 200 });
-  });
+  const segmentBodies: Record<string, string> = {
+    "https://seg/dl_new":  "Date,Counts,Download Type\n2026-05-18,5,First-time download\n",
+    "https://seg/dl_old":  "Date,Counts,Download Type\n2026-05-17,3,First-time download\n",
+    "https://seg/eng_new": "Date,Counts,Event\n2026-05-18,10,Impression\n",
+  };
+  const fetchMock = vi.fn(async (url: string) => new Response(segmentBodies[url] ?? "", { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
+
   const { fetchLatestAnalyticsCsv } = await import("@/lib/sources/asc-live");
-  const csv = await fetchLatestAnalyticsCsv(key as any, "req1");
-  expect(csv).toContain("2026-05-18,5");
-  // Confirms it picked inst_new (the later processingDate), not inst_old
-  expect(csv).not.toContain("2026-05-10,1");
+  const chunks = await fetchLatestAnalyticsCsv(key as any, "req1");
+
+  expect(chunks).toHaveLength(3);
+  const joined = chunks.join("\n");
+  expect(joined).toContain("2026-05-18,5,First-time download");
+  expect(joined).toContain("2026-05-17,3,First-time download");
+  expect(joined).toContain("2026-05-18,10,Impression");
+  expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("dl_week"));
 });
 
 test("createOngoingRequest POSTs an ONGOING request and returns the new id", async () => {
