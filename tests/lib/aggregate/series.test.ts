@@ -72,3 +72,33 @@ describe("buildSeries — range windowing", () => {
     }
   });
 });
+
+describe("buildSeries — multiLine breakdown=app", () => {
+  it("returns one series per app", () => {
+    const card: ChartCard = { ...baseCard, viz: "multiLine", appIds: "all", breakdown: "app" };
+    const r = buildSeries(card, fakeBundle());
+    if (r.kind !== "multiLine") throw new Error();
+    expect(r.series).toHaveLength(2);
+    const alpha = r.series.find((s) => s.key === "1");
+    expect(alpha?.label).toBe("Alpha");
+    expect(alpha?.points.at(-1)?.value).toBe(14);
+  });
+});
+
+describe("buildSeries — stackedArea breakdown=country", () => {
+  it("returns one series per country across the window", () => {
+    const card: ChartCard = { ...baseCard, viz: "stackedArea", appIds: "all", breakdown: "country" };
+    const r = buildSeries(card, fakeBundle());
+    if (r.kind !== "stackedArea") throw new Error();
+    expect(r.series.some((s) => s.key === "US")).toBe(true);
+  });
+});
+
+describe("buildSeries — smallMultiples", () => {
+  it("returns one mini series per app regardless of breakdown", () => {
+    const card: ChartCard = { ...baseCard, viz: "smallMultiples", appIds: "all", breakdown: "none" };
+    const r = buildSeries(card, fakeBundle());
+    if (r.kind !== "smallMultiples") throw new Error();
+    expect(r.series).toHaveLength(2);
+  });
+});

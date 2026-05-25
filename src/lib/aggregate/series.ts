@@ -98,10 +98,73 @@ function summedDailySeries(card: ChartCard, raw: RawBundle): Point[] {
     .map(([day, value]) => ({ day, value }));
 }
 
+function breakdownByApp(card: ChartCard, raw: RawBundle): { key: string; label: string; points: Point[] }[] {
+  const apps = appIdsFor(card, raw);
+  const window = rangeWindow(card.range, raw.today);
+  return apps.map((appId) => {
+    const dayMap = appDayMap(card, appId, raw);
+    const points = [...dayMap.entries()]
+      .filter(([day]) => inWindow(day, window))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([day, value]) => ({ day, value }));
+    return { key: appId, label: raw.apps[appId]?.name ?? appId, points };
+  }).filter((s) => s.points.length > 0);
+}
+
+function breakdownByCountry(card: ChartCard, raw: RawBundle): { key: string; label: string; points: Point[] }[] {
+  const apps = appIdsFor(card, raw);
+  const window = rangeWindow(card.range, raw.today);
+  const perCountry = new Map<string, Map<string, number>>();
+  for (const appId of apps) {
+    for (const r of raw.sales[appId] ?? []) {
+      if (!inWindow(r.day, window)) continue;
+      for (const [country, v] of Object.entries(r.byCountry)) {
+        if (!perCountry.has(country)) perCountry.set(country, new Map());
+        const m = perCountry.get(country)!;
+        m.set(r.day, (m.get(r.day) ?? 0) + v);
+      }
+    }
+  }
+  return [...perCountry.entries()].map(([country, m]) => ({
+    key: country, label: country,
+    points: [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, value]) => ({ day, value })),
+  }));
+}
+
+function breakdownBySource(card: ChartCard, raw: RawBundle): { key: string; label: string; points: Point[] }[] {
+  const apps = appIdsFor(card, raw);
+  const window = rangeWindow(card.range, raw.today);
+  const perSource = new Map<string, Map<string, number>>();
+  for (const appId of apps) {
+    for (const r of raw.analytics[appId] ?? []) {
+      if (!inWindow(r.day, window)) continue;
+      for (const [source, v] of Object.entries(r.bySource)) {
+        if (!perSource.has(source)) perSource.set(source, new Map());
+        const m = perSource.get(source)!;
+        m.set(r.day, (m.get(r.day) ?? 0) + v);
+      }
+    }
+  }
+  return [...perSource.entries()].map(([source, m]) => ({
+    key: source, label: source,
+    points: [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, value]) => ({ day, value })),
+  }));
+}
+
+function multiSeries(card: ChartCard, raw: RawBundle): { key: string; label: string; points: Point[] }[] {
+  if (card.viz === "smallMultiples") return breakdownByApp({ ...card, appIds: "all" }, raw);
+  if (card.breakdown === "country") return breakdownByCountry(card, raw);
+  if (card.breakdown === "source")  return breakdownBySource(card, raw);
+  return breakdownByApp(card, raw);
+}
+
 export function buildSeries(card: ChartCard, raw: RawBundle): SeriesData {
   if (card.viz === "area" || card.viz === "bar" || card.viz === "heatmap") {
     const points = summedDailySeries(card, raw);
     return { kind: card.viz, points };
+  }
+  if (card.viz === "multiLine" || card.viz === "stackedArea" || card.viz === "smallMultiples") {
+    return { kind: card.viz, series: multiSeries(card, raw) };
   }
   throw new Error(`viz "${card.viz}" not yet implemented`);
 }
