@@ -8,6 +8,7 @@ export const reviewsPath = (appId: string) => `data/${appId}/reviews.json`;
 export const appMetaPath = (appId: string) => `data/${appId}/meta.json`;
 export const configPath = () => `data/config.json`;
 export const insightsPath = () => `data/insights.json`;
+export const dashboardsPath = () => `data/dashboards.json`;
 export const runStatusPath = () => `data/run-status.json`;
 
 export interface DailyMetric { day: string; [k: string]: string | number; }
