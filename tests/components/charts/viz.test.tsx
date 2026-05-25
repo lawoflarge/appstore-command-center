@@ -18,6 +18,8 @@ import { MultiLine } from "@/components/charts/viz/MultiLine";
 import { StackedArea } from "@/components/charts/viz/StackedArea";
 import { Bar } from "@/components/charts/viz/Bar";
 import { Funnel } from "@/components/charts/viz/Funnel";
+import { SmallMultiples } from "@/components/charts/viz/SmallMultiples";
+import { Heatmap } from "@/components/charts/viz/Heatmap";
 
 describe("Area viz", () => {
   it("renders without throwing", () => {
@@ -86,5 +88,28 @@ describe("Funnel viz", () => {
     expect(getByText("Impressions")).not.toBeNull();
     expect(getByText("Downloads")).not.toBeNull();
     expect(getByText("1,000")).not.toBeNull();
+  });
+});
+
+describe("SmallMultiples viz", () => {
+  it("renders one tile per series", () => {
+    const { container } = render(<SmallMultiples data={{
+      kind: "smallMultiples",
+      series: [
+        { key: "a", label: "Alpha", points: [{ day: "2026-05-21", value: 1 }, { day: "2026-05-22", value: 2 }] },
+        { key: "b", label: "Beta",  points: [{ day: "2026-05-21", value: 3 }, { day: "2026-05-22", value: 4 }] },
+      ],
+    }} />);
+    expect(container.querySelectorAll("[data-mini-tile]").length).toBe(2);
+  });
+});
+
+describe("Heatmap viz", () => {
+  it("renders a cell per day", () => {
+    const points = Array.from({ length: 21 }, (_, i) => ({
+      day: `2026-05-${String(i + 1).padStart(2, "0")}`, value: i,
+    }));
+    const { container } = render(<Heatmap data={{ kind: "heatmap", points }} />);
+    expect(container.querySelectorAll("[data-heatmap-cell]").length).toBe(21);
   });
 });
