@@ -14,6 +14,9 @@ vi.mock("recharts", async (importOriginal) => {
 });
 
 import { Area } from "@/components/charts/viz/Area";
+import { MultiLine } from "@/components/charts/viz/MultiLine";
+import { StackedArea } from "@/components/charts/viz/StackedArea";
+import { Bar } from "@/components/charts/viz/Bar";
 
 describe("Area viz", () => {
   it("renders without throwing", () => {
@@ -32,5 +35,38 @@ describe("Area viz", () => {
       }} />
     );
     expect(container.querySelectorAll("path").length).toBeGreaterThan(1);
+  });
+});
+
+describe("MultiLine viz", () => {
+  it("renders one line per series", () => {
+    const { container } = render(<MultiLine data={{
+      kind: "multiLine",
+      series: [
+        { key: "a", label: "Alpha", points: [{ day: "2026-05-21", value: 1 }, { day: "2026-05-22", value: 2 }] },
+        { key: "b", label: "Beta",  points: [{ day: "2026-05-21", value: 3 }, { day: "2026-05-22", value: 4 }] },
+      ],
+    }} />);
+    expect(container.querySelectorAll(".recharts-line").length).toBe(2);
+  });
+});
+
+describe("StackedArea viz", () => {
+  it("renders", () => {
+    const { container } = render(<StackedArea data={{
+      kind: "stackedArea",
+      series: [{ key: "x", label: "X", points: [{ day: "2026-05-21", value: 1 }, { day: "2026-05-22", value: 2 }] }],
+    }} />);
+    expect(container.querySelector("svg")).not.toBeNull();
+  });
+});
+
+describe("Bar viz", () => {
+  it("renders", () => {
+    const { container } = render(<Bar data={{
+      kind: "bar",
+      points: [{ day: "2026-05-21", value: 1 }, { day: "2026-05-22", value: 2 }],
+    }} />);
+    expect(container.querySelector("svg")).not.toBeNull();
   });
 });
