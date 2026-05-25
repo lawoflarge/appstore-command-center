@@ -158,6 +158,28 @@ function multiSeries(card: ChartCard, raw: RawBundle): { key: string; label: str
   return breakdownByApp(card, raw);
 }
 
+function funnelStages(card: ChartCard, raw: RawBundle): { label: string; value: number; rate?: number }[] {
+  const apps = appIdsFor(card, raw);
+  const window = rangeWindow(card.range, raw.today);
+  let impressions = 0, pageViews = 0, sessions = 0, downloads = 0;
+  for (const appId of apps) {
+    for (const r of raw.analytics[appId] ?? []) {
+      if (!inWindow(r.day, window)) continue;
+      impressions += r.impressions;
+      pageViews   += r.pageViews;
+      sessions    += r.sessions;
+      downloads   += r.downloads;
+    }
+  }
+  const rate = (a: number, b: number) => (b > 0 ? a / b : undefined);
+  return [
+    { label: "Impressions", value: impressions },
+    { label: "Page views",  value: pageViews,  rate: rate(pageViews, impressions) },
+    { label: "Sessions",    value: sessions,   rate: rate(sessions, pageViews) },
+    { label: "Downloads",   value: downloads,  rate: rate(downloads, sessions) },
+  ];
+}
+
 export function buildSeries(card: ChartCard, raw: RawBundle): SeriesData {
   if (card.viz === "area" || card.viz === "bar" || card.viz === "heatmap") {
     const points = summedDailySeries(card, raw);
@@ -166,5 +188,6 @@ export function buildSeries(card: ChartCard, raw: RawBundle): SeriesData {
   if (card.viz === "multiLine" || card.viz === "stackedArea" || card.viz === "smallMultiples") {
     return { kind: card.viz, series: multiSeries(card, raw) };
   }
-  throw new Error(`viz "${card.viz}" not yet implemented`);
+  if (card.viz === "funnel") return { kind: "funnel", stages: funnelStages(card, raw) };
+  throw new Error(`unknown viz "${card.viz}"`);
 }

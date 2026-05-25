@@ -102,3 +102,21 @@ describe("buildSeries — smallMultiples", () => {
     expect(r.series).toHaveLength(2);
   });
 });
+
+describe("buildSeries — funnel", () => {
+  it("returns the four analytics-funnel stages with rates between them", () => {
+    const bundle = fakeBundle();
+    bundle.analytics["1"] = [
+      { day: "2026-05-22", impressions: 1000, pageViews: 200, sessions: 60, downloads: 30,
+        activeDevices: 50, deletions: 0, crashes: 0, bySource: {} },
+    ];
+    const card: ChartCard = { ...baseCard, viz: "funnel", appIds: "all", range: "7d" };
+    const r = buildSeries(card, bundle);
+    if (r.kind !== "funnel") throw new Error();
+    expect(r.stages.map((s) => s.label)).toEqual(["Impressions", "Page views", "Sessions", "Downloads"]);
+    expect(r.stages[0].value).toBe(1000);
+    expect(r.stages[3].value).toBe(30);
+    expect(r.stages[1].rate).toBeCloseTo(200 / 1000, 3);
+    expect(r.stages[3].rate).toBeCloseTo(30 / 60, 3);
+  });
+});
