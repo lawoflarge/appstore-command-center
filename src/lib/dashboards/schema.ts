@@ -31,5 +31,5 @@ export const chartCardSchema = z.object({
 
 export const dashboardSliceSchema = z.object({
   cards: z.array(chartCardSchema).max(40),
-  updatedAt: z.string(),
+  updatedAt: z.string().datetime(),
 });
