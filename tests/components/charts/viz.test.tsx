@@ -17,6 +17,7 @@ import { Area } from "@/components/charts/viz/Area";
 import { MultiLine } from "@/components/charts/viz/MultiLine";
 import { StackedArea } from "@/components/charts/viz/StackedArea";
 import { Bar } from "@/components/charts/viz/Bar";
+import { Funnel } from "@/components/charts/viz/Funnel";
 
 describe("Area viz", () => {
   it("renders without throwing", () => {
@@ -68,5 +69,22 @@ describe("Bar viz", () => {
       points: [{ day: "2026-05-21", value: 1 }, { day: "2026-05-22", value: 2 }],
     }} />);
     expect(container.querySelector("svg")).not.toBeNull();
+  });
+});
+
+describe("Funnel viz", () => {
+  it("renders each stage label and value", () => {
+    const { getByText } = render(<Funnel data={{
+      kind: "funnel",
+      stages: [
+        { label: "Impressions", value: 1000 },
+        { label: "Page views",  value: 200, rate: 0.2 },
+        { label: "Sessions",    value: 60,  rate: 0.3 },
+        { label: "Downloads",   value: 30,  rate: 0.5 },
+      ],
+    }} />);
+    expect(getByText("Impressions")).not.toBeNull();
+    expect(getByText("Downloads")).not.toBeNull();
+    expect(getByText("1,000")).not.toBeNull();
   });
 });
