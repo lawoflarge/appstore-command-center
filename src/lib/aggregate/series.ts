@@ -79,6 +79,33 @@ function appDayMap(card: ChartCard, appId: string, raw: RawBundle): Map<string, 
     for (const r of raw.analytics[appId] ?? []) out.set(r.day, metricValueFromRow(card.metric, "analytics", r));
   } else if (src === "ratings") {
     for (const r of raw.ratings[appId] ?? []) out.set(r.day, metricValueFromRow(card.metric, "ratings", r));
+  } else if (src === "derived") {
+    for (const r of raw.analytics[appId] ?? []) {
+      const num = card.metric === "convPageToInstall" ? r.downloads : r.pageViews;
+      const den = card.metric === "convPageToInstall" ? r.pageViews  : r.impressions;
+      if (den > 0) out.set(r.day, num / den);
+    }
+  } else if (src === "reviews") {
+    if (card.metric === "reviewCount") {
+      for (const rv of raw.reviews[appId] ?? []) {
+        const day = rv.createdDate.slice(0, 10);
+        out.set(day, (out.get(day) ?? 0) + 1);
+      }
+    } else if (card.metric === "responseRate") {
+      const counts = new Map<string, number>();
+      const responded = new Map<string, number>();
+      for (const rv of raw.reviews[appId] ?? []) {
+        const day = rv.createdDate.slice(0, 10);
+        counts.set(day, (counts.get(day) ?? 0) + 1);
+        if (rv.responded) responded.set(day, (responded.get(day) ?? 0) + 1);
+      }
+      for (const [day, total] of counts) out.set(day, (responded.get(day) ?? 0) / total);
+    }
+  } else if (src === "keywords") {
+    for (const r of raw.keywords[appId] ?? []) {
+      if (card.keywordTerm && r.term !== card.keywordTerm) continue;
+      if (r.rank != null) out.set(r.day, r.rank);
+    }
   }
   return out;
 }
@@ -180,9 +207,33 @@ function funnelStages(card: ChartCard, raw: RawBundle): { label: string; value: 
   ];
 }
 
+function previousPeriodSeries(card: ChartCard, raw: RawBundle): Point[] {
+  const cur = rangeWindow(card.range, raw.today);
+  const from = new Date(cur.from + "T00:00:00Z");
+  const to   = new Date(cur.to   + "T00:00:00Z");
+  const spanDays = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+  const prevTo = new Date(from.getTime() - 86_400_000);
+  const prevFrom = new Date(prevTo.getTime() - (spanDays - 1) * 86_400_000);
+  const shifted: ChartCard = { ...card, range: "all", compare: "none" };
+  const all = summedDailySeries(shifted, { ...raw, today: prevTo.toISOString().slice(0, 10) });
+  const fromIso = prevFrom.toISOString().slice(0, 10);
+  const prevToIso = prevTo.toISOString().slice(0, 10);
+  return all
+    .filter((p) => p.day >= fromIso && p.day <= prevToIso)
+    .map((p) => {
+      const d = new Date(p.day + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + spanDays);
+      return { day: d.toISOString().slice(0, 10), value: p.value };
+    });
+}
+
 export function buildSeries(card: ChartCard, raw: RawBundle): SeriesData {
   if (card.viz === "area" || card.viz === "bar" || card.viz === "heatmap") {
     const points = summedDailySeries(card, raw);
+    if (card.viz !== "heatmap" && card.compare === "prevPeriod") {
+      const compare = previousPeriodSeries(card, raw);
+      return { kind: card.viz, points, compare };
+    }
     return { kind: card.viz, points };
   }
   if (card.viz === "multiLine" || card.viz === "stackedArea" || card.viz === "smallMultiples") {

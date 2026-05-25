@@ -120,3 +120,26 @@ describe("buildSeries — funnel", () => {
     expect(r.stages[3].rate).toBeCloseTo(30 / 60, 3);
   });
 });
+
+describe("buildSeries — derived metric (convPageToInstall)", () => {
+  it("computes downloads / pageViews per day", () => {
+    const bundle = fakeBundle();
+    bundle.analytics["1"] = [
+      { day: "2026-05-22", impressions: 1000, pageViews: 200, sessions: 60, downloads: 30,
+        activeDevices: 0, deletions: 0, crashes: 0, bySource: {} },
+    ];
+    const card: ChartCard = { ...baseCard, metric: "convPageToInstall", viz: "area", appIds: ["1"], range: "7d" };
+    const r = buildSeries(card, bundle);
+    if (r.kind !== "area") throw new Error();
+    expect(r.points[0].value).toBeCloseTo(30 / 200, 3);
+  });
+});
+
+describe("buildSeries — compare=prevPeriod", () => {
+  it("returns a compare array when prevPeriod is requested", () => {
+    const card: ChartCard = { ...baseCard, compare: "prevPeriod", range: "7d" };
+    const r = buildSeries(card, fakeBundle());
+    if (r.kind !== "area") throw new Error();
+    expect(Array.isArray(r.compare)).toBe(true);
+  });
+});
