@@ -3,8 +3,12 @@ import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { buildGlance, visibleAppIds } from "@/lib/aggregate/api";
-import { runStatusPath, type RunStatus } from "@/lib/store/paths";
+import { runStatusPath, dashboardsPath, type RunStatus } from "@/lib/store/paths";
 import { todayUtc } from "@/lib/dates";
+import { ConfigurableDashboard } from "@/components/dashboard/ConfigurableDashboard";
+import { defaultsFor } from "@/lib/dashboards/defaults";
+import { loadRawBundle } from "@/lib/aggregate/rawBundle";
+import type { DashboardsFile } from "@/lib/dashboards/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +26,10 @@ export default async function Glance() {
   const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
   const ids = await visibleAppIds(store);
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
+  const dashboards = await store.readJson<DashboardsFile>(dashboardsPath(), { byId: {} });
+  const glanceSlice = dashboards.byId["glance"] ?? defaultsFor("glance");
+  const raw = await loadRawBundle(store, ids, todayUtc(), 4);
+  const dashboardApps = ids.map((id) => ({ id, name: raw.apps[id]?.name ?? id }));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
   const rating = g.blendedRating;
@@ -67,6 +75,7 @@ export default async function Glance() {
           <Card>No cron run yet. Trigger <code>/api/cron</code> with the bearer secret or wait until 06:00 UTC.</Card>
         )}
       </div>
+      <ConfigurableDashboard id="glance" initial={glanceSlice} raw={raw} apps={dashboardApps} />
     </main>
   );
 }
