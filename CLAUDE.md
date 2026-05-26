@@ -24,19 +24,26 @@ Private, single-user dashboard pulling App Store Connect data daily, running rul
 
 ```
 src/app/                  Next.js App Router pages (one folder = one route)
-  api/                    /api/cron + /api/auth/[...nextauth]
-  app/[id]/               per-app detail
+  api/                    /api/cron + /api/auth/[...nextauth] + /api/config + /api/data + /api/dashboards/[id]
+  app/[appId]/            per-app detail (configurable chart dashboard)
   aso/                    keyword-rank watchlist
   insights/               anomaly / funnel / forecast surface
   portfolio/              cross-app ranking
   reviews/                cross-app review feed
   settings/               per-app hide + keyword editor
 
+src/components/
+  glass/                  Card, Nav, Stat — Daylight Frost glass tokens
+  charts/viz/             7 viz components (Area, MultiLine, StackedArea, Bar, Funnel, SmallMultiples, Heatmap) + VizRenderer dispatcher
+  dashboard/              ConfigurableDashboard grid + ChartCardFrame + CardEditor slide-over
+  settings/               per-app settings rows
+
 src/lib/
   asc/                    ASC client + ES256 JWT minting (jwt.ts, client.ts)
   sources/                5 collectors: sales, analytics, reviews, ratings, keywords (+ apps discovery)
   store/                  GitHub Contents API write layer (retry-on-409), path helpers
-  aggregate/              compute-on-read aggregations for dashboard pages
+  aggregate/              compute-on-read aggregations + buildSeries (series.ts) + loadRawBundle (rawBundle.ts)
+  dashboards/             ChartCard types, defaults, zod schema, metric × viz compatibility matrix
   intelligence/           anomaly, funnel, keywords, forecast, engine (rules-based, no LLM)
   auth/config.ts          Auth.js v5 GitHub provider + allowlist
   orchestrator.ts         cron entrypoint: discover → 5 collectors per app in parallel → intelligence pass
@@ -85,7 +92,7 @@ cd appstore-command-center
 pnpm install
 cp .env.example .env.local
 # fill .env.local from your password manager — see README "Environment variables"
-pnpm test     # 66 tests should pass without any env vars
+pnpm test     # 110 tests should pass without any env vars
 pnpm build    # lint + typecheck + production build
 pnpm dev      # http://localhost:3000 — most pages empty until cron has run on prod
 ```
@@ -96,4 +103,5 @@ For ASC key + OAuth app + data repo + Vercel import steps, see **README → Setu
 
 - Live design intent: `docs/superpowers/specs/2026-05-19-appstore-command-center-design.md`
 - Full implementation plan (122 KB, the actual build log): `docs/superpowers/plans/2026-05-19-appstore-command-center.md`
+- Configurable charts (added 2026-05-26): `docs/superpowers/specs/2026-05-24-configurable-charts-design.md` + `docs/superpowers/plans/2026-05-24-configurable-charts.md`
 - User-facing setup + env vars: `README.md`
