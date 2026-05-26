@@ -5,6 +5,8 @@
   --mesh-a:#d9e4ff; --mesh-b:#ffe1ec;
   --ink:#1c2030; --ink-2:#5b6178;
   --accent:#6d5dfb; --ok:#16a34a; --bad:#e11d48; --star:#f59e0b;
+  --cat-1:#6d5dfb; --cat-2:#10b981; --cat-3:#f59e0b; --cat-4:#ef4444; --cat-5:#0ea5e9; --cat-6:#a855f7;
+  --chart-grid:rgba(28,32,48,.08);
   --glass:rgba(255,255,255,.62); --glass-br:rgba(255,255,255,.85);
 }
 html,body{height:100%}
