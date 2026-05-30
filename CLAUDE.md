@@ -29,6 +29,7 @@ src/app/                  Next.js App Router pages (one folder = one route)
   aso/                    keyword-rank watchlist
   insights/               anomaly / funnel / forecast surface
   portfolio/              cross-app ranking
+  revenue/                AdMob ad-revenue charts (earnings/impressions/requests/eCPM; day·month·lifetime)
   reviews/                cross-app review feed
   settings/               per-app hide + keyword editor
 
@@ -40,7 +41,7 @@ src/components/
 
 src/lib/
   asc/                    ASC client + ES256 JWT minting (jwt.ts, client.ts)
-  sources/                5 collectors: sales, analytics, reviews, ratings, keywords (+ apps discovery)
+  sources/                5 per-app collectors: sales, analytics, reviews, ratings, keywords (+ apps discovery) + admob (account-wide ad revenue, optional ADMOB_* env)
   store/                  GitHub Contents API write layer (retry-on-409), path helpers
   aggregate/              compute-on-read aggregations + buildSeries (series.ts) + loadRawBundle (rawBundle.ts)
   dashboards/             ChartCard types, defaults, zod schema, metric × viz compatibility matrix
