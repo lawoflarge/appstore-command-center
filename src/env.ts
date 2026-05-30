@@ -13,6 +13,11 @@ const schema = z.object({
   GITHUB_DATA_TOKEN: z.string().min(1),
   GITHUB_DATA_BRANCH: z.string().default("main"),
   CRON_SECRET: z.string().min(1),
+  // AdMob Reporting API (optional — account-wide ad revenue). Absent on deploys
+  // that don't track ad revenue; the Revenue tab shows an empty state then.
+  ADMOB_CLIENT_ID: z.string().optional(),
+  ADMOB_CLIENT_SECRET: z.string().optional(),
+  ADMOB_REFRESH_TOKEN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

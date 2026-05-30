@@ -12,7 +12,8 @@ import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { configPath, type Config } from "@/lib/store/paths";
+import { configPath, admobPath, type Config } from "@/lib/store/paths";
+import { admobConfigured, collectAdmob, type AdMobRow } from "@/lib/sources/admob";
 
 export const maxDuration = 60;
 
@@ -48,5 +49,32 @@ export async function GET(req: Request): Promise<Response> {
       runIntelligence: (args) => runIntelligence(args),
     },
   });
-  return NextResponse.json({ ok: true, status });
+  // AdMob ad revenue — account-wide, one API call (not per-app). Refreshes a
+  // trailing window so late estimate revisions land; older months persist in
+  // their own append-only files. Never fails the cron.
+  let admob: { ok: boolean; rows?: number; error?: string } = { ok: false };
+  if (admobConfigured(e)) {
+    try {
+      const start = new Date(`${day}T00:00:00Z`);
+      start.setUTCDate(start.getUTCDate() - 92);
+      const rows = await collectAdmob(e, start.toISOString().slice(0, 10), day);
+      const byMonth = new Map<string, AdMobRow[]>();
+      for (const r of rows) {
+        const m = r.day.slice(0, 7);
+        const list = byMonth.get(m) ?? [];
+        list.push(r);
+        byMonth.set(m, list);
+      }
+      for (const [m, mrows] of byMonth) {
+        await store.upsertKeyedArray(
+          admobPath(`${m}-01`), mrows,
+          (r) => `${r.day}|${r.appId}|${r.adUnit}`, `data: admob ${m}`,
+        );
+      }
+      admob = { ok: true, rows: rows.length };
+    } catch (err) {
+      admob = { ok: false, error: String(err instanceof Error ? err.message : err) };
+    }
+  }
+  return NextResponse.json({ ok: true, status, admob });
 }

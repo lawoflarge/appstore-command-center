@@ -1,0 +1,116 @@
+import { Nav } from "@/components/glass/Nav";
+import { Stat } from "@/components/glass/Stat";
+import { Card } from "@/components/glass/Card";
+import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
+import { admobPath } from "@/lib/store/paths";
+import type { AdMobRow } from "@/lib/sources/admob";
+import { todayUtc } from "@/lib/dates";
+import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
+
+export const dynamic = "force-dynamic";
+
+const CURRENCY = "EUR";
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+interface Acc { earnings: number; impressions: number; requests: number; clicks: number }
+const emptyAcc = (): Acc => ({ earnings: 0, impressions: 0, requests: 0, clicks: 0 });
+function add(map: Map<string, Acc>, key: string, r: AdMobRow) {
+  const a = map.get(key) ?? emptyAcc();
+  a.earnings += r.earnings; a.impressions += r.impressions;
+  a.requests += r.requests; a.clicks += r.clicks;
+  map.set(key, a);
+}
+const toSeries = (map: Map<string, Acc>): SeriesPoint[] =>
+  [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, a]) => ({
+    label,
+    earnings: round2(a.earnings),
+    impressions: a.impressions,
+    requests: a.requests,
+    ecpm: a.impressions > 0 ? round2((a.earnings / a.impressions) * 1000) : 0,
+  }));
+
+function lastMonths(curMonth: string, n: number): string[] {
+  const out: string[] = [];
+  let [y, m] = curMonth.split("-").map(Number);
+  for (let i = 0; i < n; i++) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m -= 1; if (m === 0) { m = 12; y -= 1; }
+  }
+  return out;
+}
+
+export default async function Revenue() {
+  const store = makeStore(ghBackendFromEnv());
+  const now = todayUtc();
+  const curMonth = now.slice(0, 7);
+  const months = lastMonths(curMonth, 18);
+  const arrays = await Promise.all(
+    months.map((m) => store.readJson<AdMobRow[]>(admobPath(`${m}-01`), [])),
+  );
+  const all = arrays.flat();
+
+  const dayMap = new Map<string, Acc>();
+  const monMap = new Map<string, Acc>();
+  const appMap = new Map<string, { earnings: number; impressions: number }>();
+  const unitMap = new Map<string, { earnings: number; impressions: number }>();
+  const life = emptyAcc();
+  for (const r of all) {
+    add(dayMap, r.day, r);
+    add(monMap, r.day.slice(0, 7), r);
+    const a = appMap.get(r.app) ?? { earnings: 0, impressions: 0 };
+    a.earnings += r.earnings; a.impressions += r.impressions; appMap.set(r.app, a);
+    const u = unitMap.get(r.adUnit) ?? { earnings: 0, impressions: 0 };
+    u.earnings += r.earnings; u.impressions += r.impressions; unitMap.set(r.adUnit, u);
+    life.earnings += r.earnings; life.impressions += r.impressions;
+    life.requests += r.requests; life.clicks += r.clicks;
+  }
+
+  const daily = toSeries(dayMap).slice(-90);
+  const monthly = toSeries(monMap);
+  const byApp: Breakdown[] = [...appMap.entries()]
+    .map(([name, v]) => ({ name, earnings: round2(v.earnings), impressions: v.impressions }))
+    .sort((a, b) => b.earnings - a.earnings);
+  const byAdUnit: Breakdown[] = [...unitMap.entries()]
+    .map(([name, v]) => ({ name, earnings: round2(v.earnings), impressions: v.impressions }))
+    .sort((a, b) => b.earnings - a.earnings);
+
+  const thisMonth = monMap.get(curMonth)?.earnings ?? 0;
+  const today = dayMap.get(now)?.earnings ?? 0;
+  const ecpm = life.impressions > 0 ? (life.earnings / life.impressions) * 1000 : 0;
+  const eur = (n: number) => `${n.toFixed(2)} ${CURRENCY}`;
+
+  return (
+    <main>
+      <Nav />
+      <h1 className="mb-1 text-2xl font-bold tracking-tight">Revenue</h1>
+      <p className="mb-5 text-xs text-[var(--ink-2)]">
+        AdMob ad revenue across all apps (publisher pub-6563643868702361). Estimated, pre-finalization.
+      </p>
+
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Stat label="Lifetime earnings" value={eur(life.earnings)} />
+        <Stat label="This month" value={eur(thisMonth)} />
+        <Stat label="Today" value={eur(today)} />
+        <Stat label="Blended eCPM" value={eur(ecpm)} />
+        <Stat label="Lifetime impressions" value={life.impressions.toLocaleString()} />
+        <Stat label="Ad requests" value={life.requests.toLocaleString()} />
+        <Stat label="Clicks" value={life.clicks.toLocaleString()} />
+        <Stat label="Apps earning" value={String(byApp.length)} />
+      </div>
+
+      {all.length === 0 ? (
+        <Card>
+          <div className="text-sm">
+            No AdMob data yet. Once <code>ADMOB_CLIENT_ID</code> / <code>ADMOB_CLIENT_SECRET</code> /{" "}
+            <code>ADMOB_REFRESH_TOKEN</code> are set in the environment, the daily cron pulls earnings
+            into <code>data/admob/&lt;YYYY-MM&gt;.json</code>. Trigger <code>/api/cron</code> with the
+            bearer secret or wait for 06:00 UTC. Estimated earnings also have AdMob&apos;s own reporting
+            lag.
+          </div>
+        </Card>
+      ) : (
+        <RevenueCharts daily={daily} monthly={monthly} byApp={byApp} byAdUnit={byAdUnit} currency={CURRENCY} />
+      )}
+    </main>
+  );
+}

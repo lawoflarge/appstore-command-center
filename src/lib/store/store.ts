@@ -62,6 +62,19 @@ export function makeStore(gh: GhBackend) {
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
     },
+    /** Merge rows into an array file keyed by a composite key, replacing dupes. */
+    async upsertKeyedArray<T>(
+      path: string, rows: T[], keyOf: (r: T) => string, message: string,
+    ): Promise<void> {
+      await retryOn409(async () => {
+        const existing = await gh.get<T[]>(path);
+        const map = new Map<string, T>();
+        for (const r of existing?.value ?? []) map.set(keyOf(r), r);
+        for (const r of rows) map.set(keyOf(r), r);
+        const merged = [...map.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
+        await gh.put(path, merged, existing?.sha ?? null, message);
+      });
+    },
   };
 }
 

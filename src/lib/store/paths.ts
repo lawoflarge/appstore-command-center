@@ -5,6 +5,7 @@ export const analyticsPath = (appId: string, day: string) => `data/${appId}/anal
 export const ratingsPath = (appId: string, day: string) => `data/${appId}/ratings/${month(day)}.json`;
 export const keywordsPath = (appId: string, day: string) => `data/${appId}/keywords/${month(day)}.json`;
 export const reviewsPath = (appId: string) => `data/${appId}/reviews.json`;
+export const admobPath = (day: string) => `data/admob/${month(day)}.json`;
 export const appMetaPath = (appId: string) => `data/${appId}/meta.json`;
 export const configPath = () => `data/config.json`;
 export const insightsPath = () => `data/insights.json`;
