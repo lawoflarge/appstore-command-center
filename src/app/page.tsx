@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Nav } from "@/components/glass/Nav";
 import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
@@ -47,19 +48,23 @@ export default async function Glance() {
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
       <p className="mb-4 text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
-      <div className="grid gap-4">
+      <div className="grid gap-3">
         {g.apps.map((a) => (
-          <Card key={a.appId}>
-            <div className="flex items-baseline justify-between">
-              <span className="font-semibold">{a.name}</span>
-              <span className="num text-lg">{a.today} today</span>
+          <Link key={a.appId} href={`/app/${a.appId}`} className="glass glass-link block p-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="truncate font-semibold">{a.name}</span>
+              <span className="flex items-center gap-2 whitespace-nowrap">
+                {a.rating?.count ? <span className="text-xs text-[var(--star)]">★ {a.rating.avg.toFixed(2)}</span> : null}
+                <span className="num text-lg"><span className="font-semibold">{a.today}</span> today</span>
+                <span aria-hidden className="text-[var(--ink-2)]">›</span>
+              </span>
             </div>
             {a.anomaly && (
-              <div className="mt-2 text-sm text-[var(--bad)]">
+              <div className={`mt-2 text-sm ${a.anomaly.direction === "drop" ? "text-[var(--bad)]" : "text-[var(--ok)]"}`}>
                 {a.anomaly.direction === "drop" ? "▼" : "▲"} {a.anomaly.metric}: {a.anomaly.cause}
               </div>
             )}
-          </Card>
+          </Link>
         ))}
         {g.apps.length === 0 && status && (
           <Card>

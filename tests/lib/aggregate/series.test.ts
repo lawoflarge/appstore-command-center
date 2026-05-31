@@ -104,7 +104,7 @@ describe("buildSeries — smallMultiples", () => {
 });
 
 describe("buildSeries — funnel", () => {
-  it("returns the four analytics-funnel stages with rates between them", () => {
+  it("returns Impressions → Page views → Downloads with rates between them", () => {
     const bundle = fakeBundle();
     bundle.analytics["1"] = [
       { day: "2026-05-22", impressions: 1000, pageViews: 200, sessions: 60, downloads: 30,
@@ -113,11 +113,28 @@ describe("buildSeries — funnel", () => {
     const card: ChartCard = { ...baseCard, viz: "funnel", appIds: "all", range: "7d" };
     const r = buildSeries(card, bundle);
     if (r.kind !== "funnel") throw new Error();
-    expect(r.stages.map((s) => s.label)).toEqual(["Impressions", "Page views", "Sessions", "Downloads"]);
+    expect(r.stages.map((s) => s.label)).toEqual(["Impressions", "Page views", "Downloads"]);
     expect(r.stages[0].value).toBe(1000);
-    expect(r.stages[3].value).toBe(30);
+    expect(r.stages[2].value).toBe(30);
     expect(r.stages[1].rate).toBeCloseTo(200 / 1000, 3);
-    expect(r.stages[3].rate).toBeCloseTo(30 / 60, 3);
+    expect(r.stages[2].rate).toBeCloseTo(30 / 200, 3);
+  });
+
+  it("uses analytics downloads for the metric=downloads area chart when analytics has rows", () => {
+    const bundle = fakeBundle();
+    bundle.analytics["1"] = [
+      { day: "2026-05-21", impressions: 0, pageViews: 0, sessions: 0, downloads: 7,
+        activeDevices: 0, deletions: 0, crashes: 0, bySource: {} },
+      { day: "2026-05-22", impressions: 0, pageViews: 0, sessions: 0, downloads: 9,
+        activeDevices: 0, deletions: 0, crashes: 0, bySource: {} },
+    ];
+    const r = buildSeries({ ...baseCard, appIds: ["1"], range: "7d" }, bundle);
+    if (r.kind !== "area") throw new Error();
+    // analytics present → ignores the sales rows (10/12/14), uses analytics downloads (7/9)
+    expect(r.points).toEqual([
+      { day: "2026-05-21", value: 7 },
+      { day: "2026-05-22", value: 9 },
+    ]);
   });
 });
 
