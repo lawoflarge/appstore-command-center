@@ -2,9 +2,42 @@ import {
   salesPath, analyticsPath, ratingsPath, keywordsPath, reviewsPath,
   appMetaPath, configPath, insightsPath, runStatusPath,
   type AppMeta, type Config, type RunStatus, type Review,
+  type AnalyticsDay, type KeywordRank,
 } from "@/lib/store/paths";
 import type { Store } from "@/lib/store/store";
 import type { AppInput } from "@/lib/intelligence/engine";
+import type { FunnelStage } from "@/lib/intelligence/funnel";
+
+// Aggregate a contiguous slice of analytics days into one funnel stage. Rates are
+// ratios, so summing a window is equivalent to averaging it.
+function sumFunnel(rows: AnalyticsDay[]): FunnelStage {
+  return rows.reduce<FunnelStage>(
+    (acc, r) => ({
+      impressions: acc.impressions + r.impressions,
+      pageViews: acc.pageViews + r.pageViews,
+      downloads: acc.downloads + r.downloads,
+    }),
+    { impressions: 0, pageViews: 0, downloads: 0 },
+  );
+}
+
+// Build a real intelligence input from the freshly collected analytics + keywords.
+// funnelToday = trailing 7 days, funnelBaseline = the 7 days before that ("this week
+// vs last week"), which is stable for the low daily volumes these apps see.
+function buildAppInput(
+  app: AppMeta, analytics: AnalyticsDay[], keywords: KeywordRank[],
+): AppInput {
+  const sorted = [...analytics].sort((a, b) => a.day.localeCompare(b.day));
+  const downloads = sorted.map((r) => ({ day: r.day, value: r.downloads }));
+  const last14 = sorted.slice(-14);
+  const funnelToday = sumFunnel(last14.slice(-7));
+  const funnelBaseline = sumFunnel(last14.slice(0, Math.max(0, last14.length - 7)));
+  return {
+    appId: app.appId, name: app.name,
+    downloads, funnelToday, funnelBaseline,
+    keywords, releases: app.releases,
+  };
+}
 
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
@@ -59,14 +92,25 @@ export async function runDailyCollection(input: {
   // Per-app work runs in parallel — each app writes to distinct paths so there's no
   // contention, and the GitHub Contents API handles concurrent commits. Serial loop
   // blew the 60s Hobby function cap once analytics started doing real CSV downloads.
+  // Captured from the parallel pass so the intelligence input can be built from real
+  // collected data instead of the zeroed placeholder it used before.
+  const collected: Record<string, { analytics: AnalyticsDay[]; keywords: KeywordRank[] }> = {};
+
   const perApp = apps.map(async (a) => {
     const id = a.appId;
-    if (salesByApp[id]) await store.upsertDailyArray(salesPath(id, day), [salesByApp[id]], `data: sales ${id} ${day}`);
+    collected[id] = { analytics: [], keywords: [] };
+    // Sales rows carry a lagged report date (see cron route); file them under their own
+    // day so a month-boundary lag lands in the correct month file.
+    if (salesByApp[id]) {
+      const sd = salesByApp[id].day ?? day;
+      await store.upsertDailyArray(salesPath(id, sd), [salesByApp[id]], `data: sales ${id} ${sd}`);
+    }
 
     let analyticsDays: Record<string, any> = {};
     try { analyticsDays = await deps.collectAnalytics(id); mark(id, "analytics", true, { rows: Object.keys(analyticsDays).length }); }
     catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
-    const aDays = Object.values(analyticsDays);
+    const aDays = Object.values(analyticsDays) as AnalyticsDay[];
+    collected[id].analytics = aDays;
     if (aDays.length) await store.upsertDailyArray(analyticsPath(id, day), aDays as any[], `data: analytics ${id}`);
 
     let reviews: Review[] = [];
@@ -85,6 +129,7 @@ export async function runDailyCollection(input: {
     try {
       const watch = config.apps[id]?.keywords ?? [];
       const kr = await deps.collectKeywords(id, day);
+      collected[id].keywords = kr as KeywordRank[];
       if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
       void watch;
       mark(id, "keywords", true, { rows: kr.length });
@@ -92,12 +137,8 @@ export async function runDailyCollection(input: {
   });
   await Promise.all(perApp);
 
-  const intelInputs = apps.map((a) => ({
-    appId: a.appId, name: a.name,
-    downloads: [], funnelToday: { impressions: 0, pageViews: 0, downloads: 0 },
-    funnelBaseline: { impressions: 0, pageViews: 0, downloads: 0 },
-    keywords: [], releases: a.releases,
-  }));
+  const intelInputs = apps.map((a) =>
+    buildAppInput(a, collected[a.appId]?.analytics ?? [], collected[a.appId]?.keywords ?? []));
 
   try {
     const insights = await deps.runIntelligence({ day, apps: intelInputs });

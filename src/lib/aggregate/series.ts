@@ -62,7 +62,11 @@ function metricValueFromRow(
 }
 
 function sourceFor(metric: Metric): "sales" | "analytics" | "ratings" | "reviews" | "keywords" | "derived" {
-  if (["downloads", "redownloads", "proceedsUsd"].includes(metric)) return "sales";
+  // `downloads` lives in BOTH sources: analytics ("App Units", matches ASC Overview) and
+  // the finance sales TSV. For free apps the sales TSV is empty and lags ~24h, so downloads
+  // is resolved with an analytics-first fallback in appDayMap, not here.
+  if (metric === "downloads") return "analytics";
+  if (["redownloads", "proceedsUsd"].includes(metric)) return "sales";
   if (["impressions", "pageViews", "sessions", "activeDevices", "deletions", "crashes"].includes(metric)) return "analytics";
   if (["avgRating", "ratingsCount"].includes(metric)) return "ratings";
   if (["reviewCount", "responseRate"].includes(metric)) return "reviews";
@@ -73,6 +77,17 @@ function sourceFor(metric: Metric): "sales" | "analytics" | "ratings" | "reviews
 function appDayMap(card: ChartCard, appId: string, raw: RawBundle): Map<string, number> {
   const src = sourceFor(card.metric);
   const out = new Map<string, number>();
+  // Downloads: analytics is the source of truth (matches ASC Overview); fall back to the
+  // finance sales TSV only when analytics has no rows for this app.
+  if (card.metric === "downloads") {
+    const analytics = raw.analytics[appId] ?? [];
+    if (analytics.length) {
+      for (const r of analytics) out.set(r.day, r.downloads);
+    } else {
+      for (const r of raw.sales[appId] ?? []) out.set(r.day, r.total);
+    }
+    return out;
+  }
   if (src === "sales") {
     for (const r of raw.sales[appId] ?? []) out.set(r.day, metricValueFromRow(card.metric, "sales", r));
   } else if (src === "analytics") {
@@ -188,22 +203,23 @@ function multiSeries(card: ChartCard, raw: RawBundle): { key: string; label: str
 function funnelStages(card: ChartCard, raw: RawBundle): { label: string; value: number; rate?: number }[] {
   const apps = appIdsFor(card, raw);
   const window = rangeWindow(card.range, raw.today);
-  let impressions = 0, pageViews = 0, sessions = 0, downloads = 0;
+  let impressions = 0, pageViews = 0, downloads = 0;
   for (const appId of apps) {
     for (const r of raw.analytics[appId] ?? []) {
       if (!inWindow(r.day, window)) continue;
       impressions += r.impressions;
       pageViews   += r.pageViews;
-      sessions    += r.sessions;
       downloads   += r.downloads;
     }
   }
   const rate = (a: number, b: number) => (b > 0 ? a / b : undefined);
+  // Impressions → Page views → Downloads. The intermediate "Sessions" stage was removed:
+  // sessions aren't part of the acquisition funnel and dividing downloads by sessions (often
+  // 0) collapsed the install rate to "—". This matches diagnoseFunnel() in intelligence/funnel.
   return [
     { label: "Impressions", value: impressions },
     { label: "Page views",  value: pageViews,  rate: rate(pageViews, impressions) },
-    { label: "Sessions",    value: sessions,   rate: rate(sessions, pageViews) },
-    { label: "Downloads",   value: downloads,  rate: rate(downloads, sessions) },
+    { label: "Downloads",   value: downloads,  rate: rate(downloads, pageViews) },
   ];
 }
 

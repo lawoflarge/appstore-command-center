@@ -43,7 +43,7 @@ src/lib/
   asc/                    ASC client + ES256 JWT minting (jwt.ts, client.ts)
   sources/                5 per-app collectors: sales, analytics, reviews, ratings, keywords (+ apps discovery) + admob (account-wide ad revenue, optional ADMOB_* env)
   store/                  GitHub Contents API write layer (retry-on-409), path helpers
-  aggregate/              compute-on-read aggregations + buildSeries (series.ts) + loadRawBundle (rawBundle.ts)
+  aggregate/              compute-on-read aggregations + buildSeries (series.ts) + loadRawBundle (rawBundle.ts) + buildRevenue (revenue.ts: AdMob + ASC proceeds → unified)
   dashboards/             ChartCard types, defaults, zod schema, metric × viz compatibility matrix
   intelligence/           anomaly, funnel, keywords, forecast, engine (rules-based, no LLM)
   auth/config.ts          Auth.js v5 GitHub provider + allowlist
@@ -66,6 +66,9 @@ src/lib/
 - **iTunes Search API rank:** records *storefront search-result position* for watched terms. Trend signal only — not ASA rank, not exact organic rank. README documents this honestly; do not overclaim in UI copy.
 - **PII history scrub:** the public repo was filtered with `git-filter-repo` before going public (commit `fc2fe7f`). If you commit anything that looks identifying, expect a re-scrub.
 - **Codemagic / mobile builds:** unrelated to this repo — this is a Next.js web project only.
+- **Downloads come from analytics, not sales.** These are free apps: Apple's daily SALES TSV is empty (and lags), so `series.ts` resolves the `downloads` metric analytics-first with a sales fallback, and `buildGlance` does the same. Don't re-point downloads at sales.
+- **Sales report date lag.** The cron requests the SALES report for day-1…day-5 (first non-empty), never today — today's report isn't published yet. This is what makes `proceedsUsd` / IAP revenue flow.
+- **Session / active-device / crash analytics are NOT collected.** Apple only emits "App Sessions Standard" / "App Store Installation and Deletion Standard" / "App Crashes" instances above a usage threshold these low-volume apps don't meet (verified live 2026-05-31 — all returned "no daily instance"). Adding those collectors = dead code + cron cost for zero data. The `sessions`/`activeDevices`/`deletions`/`crashes` fields on `AnalyticsDay` stay 0 by design.
 
 ## Things explicitly NOT to do
 
