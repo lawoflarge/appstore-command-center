@@ -10,8 +10,8 @@ function glanceCards(): ChartCard[] {
       appIds: "all", range: "30d", bucket: "day", breakdown: "app", compare: "none" },
     { id: id(), title: "Acquisition funnel", metric: "downloads", viz: "funnel",
       appIds: "all", range: "30d", bucket: "day", breakdown: "none", compare: "none" },
-    { id: id(), title: "Active devices", metric: "activeDevices", viz: "stackedArea",
-      appIds: "all", range: "90d", bucket: "day", breakdown: "app", compare: "none" },
+    { id: id(), title: "Downloads by source", metric: "downloads", viz: "stackedArea",
+      appIds: "all", range: "90d", bucket: "day", breakdown: "source", compare: "none" },
     { id: id(), title: "Avg rating", metric: "avgRating", viz: "multiLine",
       appIds: "all", range: "90d", bucket: "day", breakdown: "app", compare: "none" },
   ];
