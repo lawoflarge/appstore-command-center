@@ -99,7 +99,12 @@ export async function runDailyCollection(input: {
   const perApp = apps.map(async (a) => {
     const id = a.appId;
     collected[id] = { analytics: [], keywords: [] };
-    if (salesByApp[id]) await store.upsertDailyArray(salesPath(id, day), [salesByApp[id]], `data: sales ${id} ${day}`);
+    // Sales rows carry a lagged report date (see cron route); file them under their own
+    // day so a month-boundary lag lands in the correct month file.
+    if (salesByApp[id]) {
+      const sd = salesByApp[id].day ?? day;
+      await store.upsertDailyArray(salesPath(id, sd), [salesByApp[id]], `data: sales ${id} ${sd}`);
+    }
 
     let analyticsDays: Record<string, any> = {};
     try { analyticsDays = await deps.collectAnalytics(id); mark(id, "analytics", true, { rows: Object.keys(analyticsDays).length }); }

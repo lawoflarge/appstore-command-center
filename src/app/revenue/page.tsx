@@ -2,9 +2,11 @@ import { Nav } from "@/components/glass/Nav";
 import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
-import { admobPath } from "@/lib/store/paths";
+import { admobPath, salesPath, type SalesDay } from "@/lib/store/paths";
 import type { AdMobRow } from "@/lib/sources/admob";
 import { todayUtc } from "@/lib/dates";
+import { visibleAppIds } from "@/lib/aggregate/api";
+import { buildRevenue } from "@/lib/aggregate/revenue";
 import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +51,14 @@ export default async function Revenue() {
   );
   const all = arrays.flat();
 
+  // App Store proceeds (IAP / subscriptions) across all visible apps, merged with AdMob
+  // into one unified revenue view.
+  const ids = await visibleAppIds(store);
+  const salesArrays = await Promise.all(
+    ids.flatMap((id) => months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
+  );
+  const rev = buildRevenue(all, salesArrays.flat());
+
   const dayMap = new Map<string, Acc>();
   const monMap = new Map<string, Acc>();
   const appMap = new Map<string, { earnings: number; impressions: number }>();
@@ -79,12 +89,35 @@ export default async function Revenue() {
   const ecpm = life.impressions > 0 ? (life.earnings / life.impressions) * 1000 : 0;
   const eur = (n: number) => `${n.toFixed(2)} ${CURRENCY}`;
 
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+
   return (
     <main>
       <Nav />
       <h1 className="mb-1 text-2xl font-bold tracking-tight">Revenue</h1>
       <p className="mb-5 text-xs text-[var(--ink-2)]">
-        AdMob ad revenue across all apps (publisher pub-6563643868702361). Estimated, pre-finalization.
+        Total revenue across every app — AdMob ads plus App Store in-app purchases &amp; subscriptions.
+        Estimated and pre-finalization; amounts summed at reported value (no FX conversion).
+      </p>
+
+      {/* Unified revenue: ads + in-app/subscriptions */}
+      <section className="mb-6">
+        <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Stat label="Total revenue" value={eur(rev.total)} />
+          <Stat label="Ad revenue" value={eur(rev.adEarnings)} />
+          <Stat label="In-app & subs" value={eur(rev.iapProceeds)} />
+          <Stat label="Ad share" value={rev.total > 0 ? pct(rev.adShare) : "—"} />
+        </div>
+        <Card className="text-xs text-[var(--ink-2)]">
+          {rev.iapProceeds > 0
+            ? <>In-app &amp; subscription proceeds come from Apple&apos;s daily finance report (lags ~24–48h). Ads are AdMob estimates.</>
+            : <>No in-app or subscription proceeds reported yet — these apps are ad-monetized. App Store proceeds will appear here once Apple&apos;s finance report lands any IAP/subscription revenue.</>}
+        </Card>
+      </section>
+
+      <h2 className="mb-2 text-lg font-semibold">Ad revenue (AdMob)</h2>
+      <p className="mb-4 text-xs text-[var(--ink-2)]">
+        Publisher pub-6563643868702361. Estimated, pre-finalization.
       </p>
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">

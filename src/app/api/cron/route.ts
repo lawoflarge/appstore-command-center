@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { env } from "@/env";
-import { todayUtc } from "@/lib/dates";
+import { todayUtc, addDays } from "@/lib/dates";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { runDailyCollection } from "@/lib/orchestrator";
 import { ascKeyFromEnv } from "@/lib/asc/jwt";
@@ -35,7 +35,17 @@ export async function GET(req: Request): Promise<Response> {
     day, store,
     deps: {
       discoverApps: () => discoverApps(ascFetchApps(key), day),
-      collectSales: (ids, d) => collectSales(ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER), ids, d),
+      // Apple's DAILY sales report for `day` doesn't exist yet (it publishes ~24-48h later,
+      // longer over weekends). Walk back day-1…day-5 and take the first report that has rows,
+      // so proceeds / IAP / subscription revenue actually flow instead of always being empty.
+      collectSales: async (ids) => {
+        const fetchTsv = ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER);
+        for (let lag = 1; lag <= 5; lag++) {
+          const res = await collectSales(fetchTsv, ids, addDays(day, -lag));
+          if (Object.keys(res).length > 0) return res;
+        }
+        return {};
+      },
       collectAnalytics: async (appId) => {
         const reqId = await ensureOngoingRequest(appId,
           (id) => listOngoingRequests(key, id),
