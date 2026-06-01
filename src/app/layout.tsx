@@ -1,7 +1,19 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
-export const metadata: Metadata = { title: "App Store Command Center" };
+export const metadata: Metadata = {
+  title: "App Store Command Center",
+  applicationName: "Command Center",
+  appleWebApp: {
+    capable: true,
+    title: "Command Center",
+    statusBarStyle: "black-translucent",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#000000",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
