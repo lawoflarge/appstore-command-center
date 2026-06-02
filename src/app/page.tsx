@@ -23,6 +23,16 @@ function fmtAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2026-05-31" → "31 May". Parsed from the string parts (no Date) to avoid any
+// timezone shift on the date label.
+function fmtDay(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return `${d} ${MONTHS[m - 1]}`;
+}
+
 export default async function Glance() {
   const store = makeStore(ghBackendFromEnv());
   const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
@@ -35,23 +45,28 @@ export default async function Glance() {
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
   const rating = g.blendedRating;
+  const latestDay = g.latestDay;
   const lastRunCopy = status
     ? `Last cron ${fmtAgo(status.lastRun)} · ${ids.length} app${ids.length === 1 ? "" : "s"} discovered`
     : "First cron hasn't run. Either wait for 06:00 UTC or trigger /api/cron with the secret.";
+  const dataThroughCopy = latestDay
+    ? `App Store data through ${fmtDay(latestDay)} — Apple publishes downloads 24–48h late, so the current day is not a bug. AdMob revenue is near real-time.`
+    : null;
   return (
     <main>
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Total downloads" value={total.toLocaleString()} />
-        <Stat label="Today" value={today.toLocaleString()} />
+        <Stat label={latestDay ? `Latest day · ${fmtDay(latestDay)}` : "Latest day"} value={today.toLocaleString()} />
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <RefreshButton />
         <p className="text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
       </div>
+      {dataThroughCopy && <p className="mb-4 text-xs text-[var(--ink-2)]">{dataThroughCopy}</p>}
       <div className="grid gap-3">
         {g.apps.map((a) => (
           <Link key={a.appId} href={`/app/${a.appId}`} className="glass glass-link block p-5">
@@ -59,7 +74,7 @@ export default async function Glance() {
               <span className="truncate font-semibold">{a.name}</span>
               <span className="flex items-center gap-2 whitespace-nowrap">
                 {a.rating?.count ? <span className="text-xs text-[var(--star)]">★ {a.rating.avg.toFixed(2)}</span> : null}
-                <span className="num text-lg"><span className="font-semibold">{a.today}</span> today</span>
+                <span className="num text-lg"><span className="font-semibold">{a.today}</span> latest</span>
                 <span aria-hidden className="text-[var(--ink-2)]">›</span>
               </span>
             </div>
