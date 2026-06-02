@@ -7,6 +7,10 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
   const apps = [];
   let ratingWeighted = 0;
   let ratingCount = 0;
+  // Freshest ASC data day across apps — the "Today" tile is really "latest available
+  // day" because Apple publishes analytics 24-48h late. Surfacing this date keeps the
+  // dashboard honest instead of implying a (near-always-zero) calendar-today.
+  let latestDay = "";
   for (const id of appIds) {
     const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
     if (!meta || meta.hidden || meta.archived) continue;
@@ -16,6 +20,7 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
     // finance report; for free apps it's commonly empty and always lags ~24h.
     const useAnalytics = analytics.length > 0;
     const day = (useAnalytics ? analytics : sales).at(-1)?.day ?? "";
+    if (day > latestDay) latestDay = day;
     const t = useAnalytics ? analyticsTotals(analytics, day) : totals(sales, day);
     const ratings = await store.readJson<RatingPoint[]>(ratingsPath(id, month + "-01"), []);
     const lastRating = ratings.at(-1) ?? null;
@@ -31,7 +36,7 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
       anomaly: insights.apps?.[id]?.anomaly ?? null,
     });
   }
-  return { apps, blendedRating: { avg: ratingCount ? ratingWeighted / ratingCount : 0, count: ratingCount } };
+  return { apps, blendedRating: { avg: ratingCount ? ratingWeighted / ratingCount : 0, count: ratingCount }, latestDay };
 }
 
 /**
