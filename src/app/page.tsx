@@ -10,7 +10,6 @@ import { buildActionItems } from "@/lib/intelligence/actions";
 import { ActionCard } from "@/components/insights/ActionCard";
 import { todayUtc } from "@/lib/dates";
 import { ConfigurableDashboard } from "@/components/dashboard/ConfigurableDashboard";
-import { RefreshButton } from "@/components/RefreshButton";
 import { defaultsFor } from "@/lib/dashboards/defaults";
 import { loadRawBundle } from "@/lib/aggregate/rawBundle";
 import type { DashboardsFile } from "@/lib/dashboards/types";
@@ -83,7 +82,6 @@ export default async function Glance() {
         )}
       </div>
       <div className="mb-2 flex flex-wrap items-center gap-3">
-        <RefreshButton />
         <p className="text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
       </div>
       {dataThroughCopy && <p className="mb-4 text-xs text-[var(--ink-2)]">{dataThroughCopy}</p>}

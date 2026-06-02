@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { RefreshButton } from "@/components/RefreshButton";
 
 const items = [["/", "Glance"], ["/portfolio", "Portfolio"], ["/revenue", "Revenue"], ["/aso", "ASO"], ["/reviews", "Reviews"], ["/insights", "Insights"], ["/settings", "Settings"]];
 
@@ -26,6 +27,9 @@ export function Nav() {
           </Link>
         );
       })}
+      <span className="ml-auto flex items-center">
+        <RefreshButton />
+      </span>
     </nav>
   );
 }
