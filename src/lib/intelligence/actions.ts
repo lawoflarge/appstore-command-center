@@ -25,6 +25,7 @@ const KEYWORD_CAP = 3;
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
+// When a funnel leak is set the caller guarantees rate <= baseline, so Math.max(0, ...) only guards against floating-point noise.
 function dropPct(rate: number, baseline: number): number {
   return baseline > 0 ? Math.max(0, (baseline - rate) / baseline) : 0;
 }
@@ -36,7 +37,7 @@ function appItems(appId: string, a: AppInsight): ActionItem[] {
   if (a.anomaly) {
     const z = Math.abs(a.anomaly.z);
     if (a.anomaly.direction === "drop") {
-      const nearRelease = a.anomaly.cause.startsWith("Near the");
+      const nearRelease = a.anomaly.nearRelease;
       items.push({
         appId, appName: a.name, kind: "anomaly_drop", severity: "critical",
         title: "Downloads dropped sharply",

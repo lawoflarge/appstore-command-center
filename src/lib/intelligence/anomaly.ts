@@ -3,6 +3,7 @@ import { zScore, type Point } from "./baseline";
 export interface Anomaly {
   appId: string; metric: string; day: string;
   direction: "spike" | "drop"; z: number; value: number; baseline: number; cause: string;
+  nearRelease: boolean;
 }
 
 export function detectAnomalies(input: {
@@ -21,7 +22,7 @@ export function detectAnomalies(input: {
     : direction === "drop"
       ? "No release nearby — check storefront availability / external event"
       : "Unusual positive movement — check press/feature/ASA";
-  return { appId: input.appId, metric: input.metric, day: input.day, direction, z: z.z, value, baseline: z.baseline, cause };
+  return { appId: input.appId, metric: input.metric, day: input.day, direction, z: z.z, value, baseline: z.baseline, cause, nearRelease: nearRelease !== undefined };
 }
 
 function daysBetween(a: string, b: string): number {

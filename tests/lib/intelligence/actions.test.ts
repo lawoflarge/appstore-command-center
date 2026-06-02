@@ -24,7 +24,7 @@ test("drop anomaly becomes a critical item with a release-aware recommendation",
     apps: {
       "1": {
         name: "Alpha",
-        anomaly: { appId: "1", metric: "downloads", day: "2026-06-01", direction: "drop", z: -3.2, value: 10, baseline: 100, cause: "Near the 1.4 release (2026-05-31)" },
+        anomaly: { appId: "1", metric: "downloads", day: "2026-06-01", direction: "drop", z: -3.2, value: 10, baseline: 100, cause: "Near the 1.4 release (2026-05-31)", nearRelease: true },
         funnel: emptyFunnel(),
         opportunities: [],
         forecast: emptyForecast(),
@@ -45,7 +45,7 @@ test("funnel pvd leak outranks a keyword opportunity which outranks a spike", ()
     apps: {
       "spike": {
         name: "Spiker",
-        anomaly: { appId: "spike", metric: "downloads", day: "2026-06-01", direction: "spike", z: 3.0, value: 200, baseline: 100, cause: "Unusual positive movement — check press/feature/ASA" },
+        anomaly: { appId: "spike", metric: "downloads", day: "2026-06-01", direction: "spike", z: 3.0, value: 200, baseline: 100, cause: "Unusual positive movement — check press/feature/ASA", nearRelease: false },
         funnel: emptyFunnel(), opportunities: [], forecast: emptyForecast(),
       },
       "leak": {
@@ -86,6 +86,25 @@ test("keyword items are capped at 3 per app, highest-ranked first", () => {
   expect(items).toHaveLength(3);
   expect(items.map((i) => i.detail).every((d) => typeof d === "string")).toBe(true);
   expect(items[0].detail).toContain("#9");
+});
+
+test("drop anomaly with no nearby release produces availability/seasonality recommendation", () => {
+  const insights: Insights = {
+    generatedAt: "2026-06-01",
+    apps: {
+      "2": {
+        name: "Beta",
+        anomaly: { appId: "2", metric: "downloads", day: "2026-06-01", direction: "drop", z: -3.5, value: 5, baseline: 80, cause: "No release nearby — check storefront availability / external event", nearRelease: false },
+        funnel: emptyFunnel(),
+        opportunities: [],
+        forecast: emptyForecast(),
+      },
+    },
+  };
+  const items = buildActionItems(insights);
+  expect(items).toHaveLength(1);
+  expect(items[0].kind).toBe("anomaly_drop");
+  expect(items[0].recommendation).toContain("availability");
 });
 
 test("flat keyword trends are not surfaced", () => {
