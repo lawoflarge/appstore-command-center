@@ -26,6 +26,7 @@ export default async function InsightsPage() {
 
   const appsWithItems = new Set(items.map((i) => i.appId));
   const allClear = entries.filter(([id]) => !appsWithItems.has(id)).map(([, a]) => a.name);
+  const hasForecast = entries.some(([, a]) => (a.forecast?.projected ?? 0) > 0);
 
   const byTier = (tier: Severity): ActionItem[] => items.filter((i) => i.severity === tier);
 
@@ -66,7 +67,7 @@ export default async function InsightsPage() {
         <p className="mb-6 text-sm text-[var(--ink-2)]">All clear: {allClear.join(", ")}.</p>
       )}
 
-      {entries.length > 0 && (
+      {hasForecast && (
         <section className="mb-6">
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[var(--ink-2)]">Month forecast</h2>
           <div className="grid gap-2">
