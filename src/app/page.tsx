@@ -4,7 +4,10 @@ import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { buildGlance, visibleAppIds } from "@/lib/aggregate/api";
-import { runStatusPath, dashboardsPath, type RunStatus } from "@/lib/store/paths";
+import { runStatusPath, dashboardsPath, insightsPath, type RunStatus } from "@/lib/store/paths";
+import type { Insights } from "@/lib/intelligence/engine";
+import { buildActionItems } from "@/lib/intelligence/actions";
+import { ActionCard } from "@/components/insights/ActionCard";
 import { todayUtc } from "@/lib/dates";
 import { ConfigurableDashboard } from "@/components/dashboard/ConfigurableDashboard";
 import { RefreshButton } from "@/components/RefreshButton";
@@ -41,6 +44,8 @@ export default async function Glance() {
   const dashboards = await store.readJson<DashboardsFile>(dashboardsPath(), { byId: {} });
   const glanceSlice = dashboards.byId["glance"] ?? defaultsFor("glance");
   const raw = await loadRawBundle(store, ids, todayUtc(), 4);
+  const insights = await store.readJson<Insights>(insightsPath(), { generatedAt: "", apps: {} });
+  const topActions = buildActionItems(insights).slice(0, 3);
   const dashboardApps = ids.map((id) => ({ id, name: raw.apps[id]?.name ?? id }));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
   const today = g.apps.reduce((s, a) => s + a.today, 0);
@@ -61,6 +66,21 @@ export default async function Glance() {
         <Stat label={latestDay ? `Latest day · ${fmtDay(latestDay)}` : "Latest day"} value={today.toLocaleString()} />
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
+      </div>
+      <div className="mb-5">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--ink-2)]">Needs your attention</h2>
+          <Link href="/insights" className="text-xs text-[var(--accent)] hover:underline">View all →</Link>
+        </div>
+        {topActions.length > 0 ? (
+          <div className="glass divide-y divide-[var(--chart-grid)] px-4 py-1">
+            {topActions.map((item, i) => (
+              <ActionCard key={`${item.appId}-${item.kind}-${i}`} item={item} variant="compact" />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--ink-2)]">All clear — nothing needs action right now.</p>
+        )}
       </div>
       <div className="mb-2 flex flex-wrap items-center gap-3">
         <RefreshButton />
