@@ -13,6 +13,7 @@ const item: ActionItem = {
 test("full variant shows title, detail and recommendation", () => {
   const { getByText } = render(<ActionCard item={item} />);
   expect(getByText("Downloads dropped sharply")).toBeTruthy();
+  expect(getByText("10 vs 100.")).toBeTruthy();
   expect(getByText("Diff the recent release.")).toBeTruthy();
   expect(getByText(/Alpha/)).toBeTruthy();
 });
@@ -20,6 +21,7 @@ test("full variant shows title, detail and recommendation", () => {
 test("compact variant shows the title and app name", () => {
   const { getByText, queryByText } = render(<ActionCard item={item} variant="compact" />);
   expect(getByText(/Downloads dropped sharply/)).toBeTruthy();
+  expect(getByText(/Needs attention:/)).toBeTruthy();
   // recommendation is hidden in compact mode
   expect(queryByText("Diff the recent release.")).toBeNull();
 });

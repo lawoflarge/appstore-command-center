@@ -19,6 +19,7 @@ export function ActionCard({ item, variant = "full" }: { item: ActionItem; varia
     return (
       <div className="flex items-center gap-2 py-1.5 text-sm">
         <span aria-hidden className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+        <span className="sr-only">{LABEL[item.severity]}: </span>
         <span className="truncate font-medium">{item.appName}</span>
         <span className="truncate text-[var(--ink-2)]"> · {item.title}</span>
       </div>
