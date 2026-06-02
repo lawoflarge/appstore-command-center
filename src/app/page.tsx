@@ -7,6 +7,7 @@ import { buildGlance, visibleAppIds } from "@/lib/aggregate/api";
 import { runStatusPath, dashboardsPath, type RunStatus } from "@/lib/store/paths";
 import { todayUtc } from "@/lib/dates";
 import { ConfigurableDashboard } from "@/components/dashboard/ConfigurableDashboard";
+import { RefreshButton } from "@/components/RefreshButton";
 import { defaultsFor } from "@/lib/dashboards/defaults";
 import { loadRawBundle } from "@/lib/aggregate/rawBundle";
 import type { DashboardsFile } from "@/lib/dashboards/types";
@@ -47,7 +48,10 @@ export default async function Glance() {
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
-      <p className="mb-4 text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <RefreshButton />
+        <p className="text-xs text-[var(--muted,#666)]">{lastRunCopy}</p>
+      </div>
       <div className="grid gap-3">
         {g.apps.map((a) => (
           <Link key={a.appId} href={`/app/${a.appId}`} className="glass glass-link block p-5">

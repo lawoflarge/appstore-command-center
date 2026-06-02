@@ -1,0 +1,41 @@
+name: Sync App Store data
+
+# Vercel Hobby allows only ONE cron run per day, so the daily job in vercel.json
+# fires at 06:00 UTC. This free GitHub Actions schedule fills the gaps: it hits the
+# same /api/cron endpoint every 6 hours. ASC data still only advances once Apple
+# publishes a new day (~24-48h lag), but the extra runs catch that publication
+# sooner and keep near-real-time AdMob revenue fresh. The collection is idempotent
+# (append-only, dedup on write), so overlapping with the Vercel cron is harmless.
+#
+# Setup (one-time): add a repo secret CRON_SECRET matching the Vercel env var.
+#   gh secret set CRON_SECRET --repo lawoflarge/appstore-command-center
+# Optional: override the target with a SITE_URL repo variable (defaults to prod).
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: appstore-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger collection
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://appstore-command-center.vercel.app' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repo secret is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron")
+          echo "HTTP $code"
+          cat /tmp/out.json
+          test "$code" = "200"
