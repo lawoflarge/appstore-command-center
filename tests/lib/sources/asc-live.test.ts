@@ -45,13 +45,17 @@ test("fetchLatestAnalyticsCsv filters reports by name and fetches recent DAILY i
   vi.stubGlobal("fetch", fetchMock);
 
   const { fetchLatestAnalyticsCsv } = await import("@/lib/sources/asc-live");
-  const chunks = await fetchLatestAnalyticsCsv(key as any, "req1");
+  const groups = await fetchLatestAnalyticsCsv(key as any, "req1");
 
-  expect(chunks).toHaveLength(3);
-  const joined = chunks.join("\n");
+  expect(groups).toHaveLength(3);
+  const joined = groups.flatMap((g) => g.segments).join("\n");
   expect(joined).toContain("2026-05-18,5,First-time download");
   expect(joined).toContain("2026-05-17,3,First-time download");
   expect(joined).toContain("2026-05-18,10,Impression");
+  // each group carries its report name + instance recency so the parser can dedupe by date
+  expect(groups.map((g) => g.processingDate).sort()).toEqual(["2026-05-17", "2026-05-18", "2026-05-18"]);
+  expect(new Set(groups.map((g) => g.report)))
+    .toEqual(new Set(["App Downloads Standard", "App Store Discovery and Engagement Standard"]));
   expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("dl_week"));
 });
 
