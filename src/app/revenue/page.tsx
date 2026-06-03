@@ -110,8 +110,8 @@ export default async function Revenue() {
         </div>
         <Card className="text-xs text-[var(--ink-2)]">
           {rev.iapProceeds > 0
-            ? <>In-app &amp; subscription proceeds come from Apple&apos;s daily finance report (lags ~24–48h). Ads are AdMob estimates.</>
-            : <>No in-app or subscription proceeds reported yet — these apps are ad-monetized. App Store proceeds will appear here once Apple&apos;s finance report lands any IAP/subscription revenue.</>}
+            ? <>In-app &amp; subscription proceeds come from Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization). Ads are AdMob estimates.</>
+            : <>No in-app or subscription proceeds reported yet. App Store IAP/subscription proceeds appear here from Apple&apos;s daily sales report (Sales and Trends), ~24–48h after a sale.</>}
         </Card>
       </section>
 

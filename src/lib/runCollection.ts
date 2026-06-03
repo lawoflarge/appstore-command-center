@@ -37,10 +37,10 @@ export async function runFullCollection(): Promise<CollectionResult> {
       // Apple's DAILY sales report for `day` doesn't exist yet (it publishes ~24-48h later,
       // longer over weekends). Walk back day-1…day-5 and take the first report that has rows,
       // so proceeds / IAP / subscription revenue actually flow instead of always being empty.
-      collectSales: async (ids) => {
+      collectSales: async (apps) => {
         const fetchTsv = ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER);
         for (let lag = 1; lag <= 5; lag++) {
-          const res = await collectSales(fetchTsv, ids, addDays(day, -lag));
+          const res = await collectSales(fetchTsv, apps, addDays(day, -lag));
           if (Object.keys(res).length > 0) return res;
         }
         return {};
