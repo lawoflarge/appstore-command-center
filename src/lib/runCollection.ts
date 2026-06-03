@@ -5,7 +5,7 @@ import { runDailyCollection } from "@/lib/orchestrator";
 import { ascKeyFromEnv } from "@/lib/asc/jwt";
 import { discoverApps, ascFetchApps } from "@/lib/sources/apps";
 import { collectSales, ascFetchSalesTsv } from "@/lib/sources/sales";
-import { parseAnalyticsCsvs, ensureOngoingRequest } from "@/lib/sources/analytics";
+import { parseAnalyticsGroups, ensureOngoingRequest } from "@/lib/sources/analytics";
 import { listOngoingRequests, createOngoingRequest, fetchLatestAnalyticsCsv } from "@/lib/sources/asc-live";
 import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
@@ -49,8 +49,8 @@ export async function runFullCollection(): Promise<CollectionResult> {
         const reqId = await ensureOngoingRequest(appId,
           (id) => listOngoingRequests(key, id),
           (id) => createOngoingRequest(key, id));
-        const chunks = await fetchLatestAnalyticsCsv(key, reqId);
-        return parseAnalyticsCsvs(chunks);
+        const groups = await fetchLatestAnalyticsCsv(key, reqId);
+        return parseAnalyticsGroups(groups);
       },
       collectReviews: async (appId) => mapReviews(await ascFetchReviews(key, appId)()),
       collectRatings: (appId, d) => collectRatings(appId, ["de", "us", "gb", "nl", "fr"], d),

@@ -23,6 +23,45 @@ export function parseAnalyticsCsv(text: string): Record<string, AnalyticsDay> {
   return acc;
 }
 
+export interface AnalyticsCsvGroup { report: string; processingDate: string; segments: string[] }
+
+// One ONGOING DAILY report produces many instances, each restating a rolling window of recent
+// dates — so the SAME calendar date appears in several instances. Summing every instance
+// double-counts those dates (the NetGuard 26-vs-13 bug). Per report, take each date from its
+// NEWEST instance only; segments WITHIN an instance are non-overlapping partitions and are
+// still summed. The two report shapes write disjoint fields (downloads/bySource vs
+// impressions/pageViews), so merging per date across reports stays correct.
+export function parseAnalyticsGroups(groups: AnalyticsCsvGroup[]): Record<string, AnalyticsDay> {
+  const byReport = new Map<string, AnalyticsCsvGroup[]>();
+  for (const g of groups) {
+    const list = byReport.get(g.report);
+    if (list) list.push(g); else byReport.set(g.report, [g]);
+  }
+  const acc: Record<string, AnalyticsDay> = {};
+  for (const insts of byReport.values()) {
+    const newestFirst = [...insts].sort((a, b) => b.processingDate.localeCompare(a.processingDate));
+    const claimed = new Set<string>();
+    for (const inst of newestFirst) {
+      const one: Record<string, AnalyticsDay> = {};
+      for (const csv of inst.segments) mergeChunkInto(one, csv);
+      for (const day of Object.keys(one)) {
+        if (claimed.has(day)) continue; // a newer instance of this report already supplied this date
+        claimed.add(day);
+        mergeDayInto(acc, one[day]);
+      }
+    }
+  }
+  return acc;
+}
+
+function mergeDayInto(acc: Record<string, AnalyticsDay>, d: AnalyticsDay): void {
+  const t = (acc[d.day] ??= emptyDay(d.day));
+  t.impressions += d.impressions;
+  t.pageViews += d.pageViews;
+  t.downloads += d.downloads;
+  for (const [src, n] of Object.entries(d.bySource)) t.bySource[src] = (t.bySource[src] ?? 0) + n;
+}
+
 function mergeChunkInto(acc: Record<string, AnalyticsDay>, text: string): void {
   if (!text || !text.trim()) return;
   const lines = text.split(/\r?\n/).filter((l) => l.trim());

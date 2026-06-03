@@ -1,5 +1,6 @@
 import { ascGetAllPages, ascGetJson as ascGetJsonImpl } from "@/lib/asc/client";
 import type { AscKey } from "@/lib/asc/jwt";
+import type { AnalyticsCsvGroup } from "@/lib/sources/analytics";
 import { gunzipSync } from "node:zlib";
 
 // Apple emits 150+ analytics reports per ongoing request; only these two carry
@@ -39,14 +40,15 @@ export async function createOngoingRequest(key: AscKey, appId: string) {
   return { id: j.data.id as string };
 }
 
-// Returns one CSV string per fetched segment. Parser merges by Date. Don't
-// concatenate here — concatenation puts multiple header rows in one string,
-// which any header-on-line-1 parser misreads.
-export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): Promise<string[]> {
+// Returns one group per report instance (its segment CSVs + recency), so the parser can
+// dedupe overlapping daily instances by date instead of summing them. Don't concatenate
+// segments here — concatenation puts multiple header rows in one string, which any
+// header-on-line-1 parser misreads.
+export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): Promise<AnalyticsCsvGroup[]> {
   const reports = await ascGetAllPages(key, `/v1/analyticsReportRequests/${requestId}/reports?limit=200`);
   const targets = reports.filter((r: any) =>
     typeof r.attributes?.name === "string" && ANALYTICS_REPORT_NAMES.has(r.attributes.name));
-  const chunks: string[] = [];
+  const groups: AnalyticsCsvGroup[] = [];
   for (const rep of targets) {
     const page = await ascGetJsonImpl<{ data: any[] }>(
       key, `/v1/analyticsReports/${rep.id}/instances?limit=200`);
@@ -58,6 +60,7 @@ export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): P
     for (const inst of dailies) {
       const segments = await ascGetAllPages(
         key, `/v1/analyticsReportInstances/${inst.id}/segments?limit=200`);
+      const csvs: string[] = [];
       for (const seg of segments) {
         const res = await fetch(seg.attributes.url);
         if (!res.ok) continue;
@@ -65,9 +68,14 @@ export async function fetchLatestAnalyticsCsv(key: AscKey, requestId: string): P
         let text: string;
         try { text = gunzipSync(buf).toString("utf8"); }
         catch { text = buf.toString("utf8"); }
-        chunks.push(text);
+        csvs.push(text);
       }
+      groups.push({
+        report: rep.attributes.name as string,
+        processingDate: String(inst.attributes?.processingDate ?? ""),
+        segments: csvs,
+      });
     }
   }
-  return chunks;
+  return groups;
 }
