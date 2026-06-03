@@ -41,7 +41,7 @@ function buildAppInput(
 
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
-  collectSales: (appIds: string[], day: string) => Promise<Record<string, any>>;
+  collectSales: (apps: { appId: string; sku: string }[], day: string) => Promise<Record<string, any>>;
   collectAnalytics: (appId: string) => Promise<Record<string, any>>;
   collectReviews: (appId: string) => Promise<Review[]>;
   collectRatings: (appId: string, day: string) => Promise<any>;
@@ -83,7 +83,7 @@ export async function runDailyCollection(input: {
   const appIds = apps.map((a) => a.appId);
   let salesByApp: Record<string, any> = {};
   try {
-    salesByApp = await deps.collectSales(appIds, day);
+    salesByApp = await deps.collectSales(apps, day);
     appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id] ? 1 : 0 }));
   } catch (e: any) {
     appIds.forEach((id) => mark(id, "sales", false, { error: String(e?.message ?? e) }));
