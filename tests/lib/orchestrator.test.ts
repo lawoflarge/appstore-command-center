@@ -88,3 +88,26 @@ test("runIntelligence failure is isolated, recorded, and blocks lastSuccess", as
   expect(status.lastSuccess).toBe("");
   expect(store.fs.has("data/insights.json")).toBe(false);
 });
+
+// A transient GitHub Contents API error (5xx / 403 rate-limit / exhausted-409) makes
+// the store WRITE throw, not just the collector. Those writes must be isolated too —
+// otherwise one app's failed write rejects Promise.all and 500s the entire cron run.
+// This reproduces the production "HTTP 500 (empty body)" failures.
+test("a store write failure is isolated and does not crash the whole run", async () => {
+  const store = memStore();
+  const realUpsert = store.upsertDailyArray;
+  store.upsertDailyArray = vi.fn(async (p: string, rows: any[], msg?: string) => {
+    if (p.includes("/analytics/")) throw new Error("GH PUT 500 analytics");
+    return realUpsert(p, rows, msg);
+  });
+  const aDay = { day: "2026-05-18", impressions: 10, pageViews: 5, downloads: 2, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: {} };
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    deps: okDeps({ collectAnalytics: async () => ({ "2026-05-18": aDay }) }),
+  });
+  // The run completed instead of throwing; the failed write is recorded; unrelated
+  // per-app data still persisted; a write failure keeps lastSuccess empty.
+  expect(status.perApp["1"].analytics.ok).toBe(false);
+  expect(store.fs.get("data/1/sales/2026-05.json")[0].total).toBe(5);
+  expect(status.lastSuccess).toBe("");
+});

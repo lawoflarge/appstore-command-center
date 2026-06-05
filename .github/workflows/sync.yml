@@ -33,9 +33,26 @@ jobs:
             echo "::error::CRON_SECRET repo secret is not set"
             exit 1
           fi
-          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$SITE_URL/api/cron")
-          echo "HTTP $code"
-          cat /tmp/out.json
-          test "$code" = "200"
+          # /api/cron is idempotent (append-only, dedup-on-write), so retrying is safe.
+          # Apple's ASC API and the GitHub data-repo writes occasionally hiccup (transient
+          # 5xx / rate-limit) or push a single run past Vercel's 60s cap (504). A few spaced
+          # retries turn those transient reds green; a real outage still fails after all of
+          # them, so genuine problems are not masked.
+          attempts=4
+          code=000
+          for i in $(seq 1 "$attempts"); do
+            code=$(curl -sS --max-time 90 -o /tmp/out.json -w "%{http_code}" \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              "$SITE_URL/api/cron" || echo 000)
+            echo "Attempt $i/$attempts -> HTTP $code"
+            cat /tmp/out.json 2>/dev/null || true
+            echo
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            if [ "$i" -lt "$attempts" ]; then
+              sleep $((i * 30))
+            fi
+          done
+          echo "::error::collection failed after $attempts attempts (last HTTP $code)"
+          exit 1
