@@ -74,11 +74,17 @@ export async function runDailyCollection(input: {
     };
   };
 
-  for (const a of apps) {
-    const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
-    const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
-    await store.writeJson(appMetaPath(a.appId), merged, `chore(data): meta ${a.appId}`);
-  }
+  // Each app's meta lives at a distinct path, so read+write them in parallel rather
+  // than 2×N sequential GitHub round-trips — a serial loop here eats into the 60s
+  // Hobby cap and was a contributor to the FUNCTION_INVOCATION_TIMEOUT runs. Guarded
+  // per-app so one transient Contents API error doesn't reject the whole collection.
+  await Promise.all(apps.map(async (a) => {
+    try {
+      const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
+      const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
+      await store.writeJson(appMetaPath(a.appId), merged, `chore(data): meta ${a.appId}`);
+    } catch (e: any) { mark(a.appId, "meta", false, { error: String(e?.message ?? e) }); }
+  }));
 
   const appIds = apps.map((a) => a.appId);
   let salesByApp: Record<string, any> = {};
@@ -100,28 +106,36 @@ export async function runDailyCollection(input: {
     const id = a.appId;
     collected[id] = { analytics: [], keywords: [] };
     // Sales rows carry a lagged report date (see cron route); file them under their own
-    // day so a month-boundary lag lands in the correct month file.
+    // day so a month-boundary lag lands in the correct month file. The write is guarded
+    // (like every other per-app write below): a transient GitHub Contents API error must
+    // mark this source failed, never reject Promise.all and 500 the whole cron.
     if (salesByApp[id]) {
-      const sd = salesByApp[id].day ?? day;
-      await store.upsertDailyArray(salesPath(id, sd), [salesByApp[id]], `data: sales ${id} ${sd}`);
+      try {
+        const sd = salesByApp[id].day ?? day;
+        await store.upsertDailyArray(salesPath(id, sd), [salesByApp[id]], `data: sales ${id} ${sd}`);
+      } catch (e: any) { mark(id, "sales", false, { error: String(e?.message ?? e) }); }
     }
 
-    let analyticsDays: Record<string, any> = {};
-    try { analyticsDays = await deps.collectAnalytics(id); mark(id, "analytics", true, { rows: Object.keys(analyticsDays).length }); }
-    catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
-    const aDays = Object.values(analyticsDays) as AnalyticsDay[];
-    collected[id].analytics = aDays;
-    if (aDays.length) await store.upsertDailyArray(analyticsPath(id, day), aDays as any[], `data: analytics ${id}`);
+    // Collect + persist in one guarded block so a write failure is recorded against the
+    // source instead of escaping the parallel pass.
+    try {
+      const analyticsDays = await deps.collectAnalytics(id);
+      const aDays = Object.values(analyticsDays) as AnalyticsDay[];
+      collected[id].analytics = aDays;
+      if (aDays.length) await store.upsertDailyArray(analyticsPath(id, day), aDays as any[], `data: analytics ${id}`);
+      mark(id, "analytics", true, { rows: aDays.length });
+    } catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
 
-    let reviews: Review[] = [];
-    try { reviews = await deps.collectReviews(id); mark(id, "reviews", true, { rows: reviews.length }); }
-    catch (e: any) { mark(id, "reviews", false, { error: String(e?.message ?? e) }); }
-    if (reviews.length) {
-      const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
-      const map = new Map(prevReviews.map((r) => [r.id, r]));
-      for (const r of reviews) map.set(r.id, r);
-      await store.writeJson(reviewsPath(id), [...map.values()], `data: reviews ${id}`);
-    }
+    try {
+      const reviews = await deps.collectReviews(id);
+      if (reviews.length) {
+        const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
+        const map = new Map(prevReviews.map((r) => [r.id, r]));
+        for (const r of reviews) map.set(r.id, r);
+        await store.writeJson(reviewsPath(id), [...map.values()], `data: reviews ${id}`);
+      }
+      mark(id, "reviews", true, { rows: reviews.length });
+    } catch (e: any) { mark(id, "reviews", false, { error: String(e?.message ?? e) }); }
 
     try { const rp = await deps.collectRatings(id, day); await store.upsertDailyArray(ratingsPath(id, day), [rp], `data: ratings ${id} ${day}`); mark(id, "ratings", true, { rows: 1 }); }
     catch (e: any) { mark(id, "ratings", false, { error: String(e?.message ?? e) }); }
@@ -148,6 +162,9 @@ export async function runDailyCollection(input: {
   }
 
   status.lastSuccess = hadFailure ? "" : new Date().toISOString();
-  await store.writeJson(runStatusPath(), status, `data: run-status ${day}`);
+  // Persist the run status, but never let a transient write here throw away an
+  // otherwise-completed run — the caller still gets the status to return.
+  try { await store.writeJson(runStatusPath(), status, `data: run-status ${day}`); }
+  catch { /* status persistence is best-effort; the run already did its work */ }
   return status;
 }
