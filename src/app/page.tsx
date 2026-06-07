@@ -64,7 +64,7 @@ export default async function Glance() {
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Downloads (this month)" value={total.toLocaleString()} />
+        <Stat label="Total downloads" value={total.toLocaleString()} />
         <Stat label={latestDay ? `Latest day · ${fmtDay(latestDay)}` : "Latest day"} value={today.toLocaleString()} />
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />

@@ -30,3 +30,21 @@ export function rowsInMonth<T extends { day: string }>(rows: T[], monthStart: st
   const m = monthStart.slice(0, 7);
   return rows.filter((r) => r.day.slice(0, 7) === m);
 }
+
+/**
+ * Inclusive ascending list of YYYY-MM months from `fromMonth` to `toMonth`, capped at `cap`
+ * months (default 18) so a missing or garbage `from` can't fan out into hundreds of file reads.
+ * Used to sum an app's lifetime totals across its monthly partition files (from `firstSeen`).
+ */
+export function monthsBetween(fromMonth: string, toMonth: string, cap = 18): string[] {
+  const out: string[] = [];
+  let [y, m] = toMonth.split("-").map(Number);
+  for (let i = 0; i < cap; i++) {
+    const cur = `${y}-${String(m).padStart(2, "0")}`;
+    out.unshift(cur);
+    if (cur <= fromMonth) break;
+    m -= 1;
+    if (m === 0) { m = 12; y -= 1; }
+  }
+  return out;
+}
