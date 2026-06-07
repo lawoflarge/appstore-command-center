@@ -44,6 +44,28 @@ test("buildGlance reports each app's value AT the shared latest day, N/A (null) 
   expect(lagging.today).toBeNull();   // no 2026-06-06 row → N/A, not the stale 4
 });
 
+test("buildGlance sums LIFETIME downloads across all months since firstSeen, not just the current month", async () => {
+  const a = (day: string, downloads: number) => ({
+    day, impressions: 0, pageViews: 0, downloads, sessions: 0,
+    activeDevices: 0, deletions: 0, crashes: 0, bySource: {},
+  });
+  const store = {
+    readJson: async (p: string, fb: any) => {
+      if (p === "data/config.json") return { apps: {} };
+      if (p === "data/1/meta.json") return { appId: "1", name: "A", hidden: false, archived: false, releases: [], firstSeen: "2026-05-20" };
+      if (p === "data/1/analytics/2026-05.json") return [a("2026-05-25", 10), a("2026-05-26", 20)];
+      if (p === "data/1/analytics/2026-06.json") return [a("2026-06-06", 3)];
+      if (p === "data/insights.json") return { apps: {} };
+      return fb;
+    },
+  };
+  const g = await buildGlance(store as any, ["1"], "2026-06");
+  const app = g.apps[0];
+  expect(app.total).toBe(33);         // 10 + 20 (May) + 3 (June) lifetime, not just June's 3
+  expect(app.today).toBe(3);          // value at the shared latest day
+  expect(g.latestDay).toBe("2026-06-06");
+});
+
 test("visibleAppIds returns all discovered apps when config is empty (day-0 default)", async () => {
   const store = {
     readJson: async (p: string, fb: any) => {

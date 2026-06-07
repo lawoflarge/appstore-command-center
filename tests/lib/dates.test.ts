@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { ymd, addDays, dayRange, rowsInMonth } from "@/lib/dates";
+import { ymd, addDays, dayRange, rowsInMonth, monthsBetween } from "@/lib/dates";
 
 test("ymd formats a UTC date", () => {
   expect(ymd(new Date("2026-05-19T23:30:00Z"))).toBe("2026-05-19");
@@ -16,6 +16,14 @@ test("dayRange is inclusive and ordered", () => {
     "2026-05-19",
     "2026-05-20",
   ]);
+});
+
+test("monthsBetween returns inclusive ascending YYYY-MM list, capped", () => {
+  expect(monthsBetween("2026-05", "2026-06")).toEqual(["2026-05", "2026-06"]);
+  expect(monthsBetween("2026-06", "2026-06")).toEqual(["2026-06"]);
+  expect(monthsBetween("2025-12", "2026-02")).toEqual(["2025-12", "2026-01", "2026-02"]);
+  // a missing/older `from` is capped so we never fan out hundreds of reads
+  expect(monthsBetween("2000-01", "2026-02", 3)).toEqual(["2025-12", "2026-01", "2026-02"]);
 });
 
 test("rowsInMonth keeps only rows whose day is in the file's month (drops cross-month rows)", () => {

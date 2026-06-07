@@ -4,7 +4,7 @@ import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { admobPath, salesPath, appMetaPath, type SalesDay, type AppMeta } from "@/lib/store/paths";
 import type { AdMobRow } from "@/lib/sources/admob";
-import { todayUtc, rowsInMonth } from "@/lib/dates";
+import { todayUtc, rowsInMonth, addDays } from "@/lib/dates";
 import { visibleAppIds } from "@/lib/aggregate/api";
 import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
 import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
@@ -40,6 +40,14 @@ function lastMonths(curMonth: string, n: number): string[] {
     m -= 1; if (m === 0) { m = 12; y -= 1; }
   }
   return out;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2026-05-31" → "31 May", parsed from the string parts to avoid any timezone shift on the label.
+function fmtDay(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return y && m && d ? `${d} ${MONTHS[m - 1]}` : iso;
 }
 
 export default async function Revenue() {
@@ -91,7 +99,16 @@ export default async function Revenue() {
     .sort((a, b) => b.earnings - a.earnings);
 
   const thisMonth = monMap.get(curMonth)?.earnings ?? 0;
-  const today = dayMap.get(now)?.earnings ?? 0;
+  // AdMob "today" is almost always 0 — estimates lag a few hours, and the OAuth refresh token
+  // expires silently (Google revokes them after 7 days while the consent screen is in "Testing"),
+  // which freezes the data. Show the latest day we actually have + flag staleness, not a misleading 0.
+  const admobDays = [...dayMap.keys()].sort();
+  const latestAdmobDay = admobDays.at(-1) ?? "";
+  const latestAdmobEarnings = latestAdmobDay ? dayMap.get(latestAdmobDay)!.earnings : 0;
+  // AdMob estimates settle within hours, so the freshest day should be today or yesterday. If the
+  // newest day we have is older than yesterday, collection has been failing (typically the expired
+  // token) — flag it. (today 07, newest 05 → 05 < 06 → stale.)
+  const admobStale = latestAdmobDay !== "" && latestAdmobDay < addDays(now, -1);
   const ecpm = life.impressions > 0 ? (life.earnings / life.impressions) * 1000 : 0;
   const eur = (n: number) => `${n.toFixed(2)} ${CURRENCY}`;
 
@@ -150,10 +167,20 @@ export default async function Revenue() {
         Publisher pub-6563643868702361. Estimated, pre-finalization.
       </p>
 
+      {admobStale && (
+        <Card className="mb-4 border border-[var(--bad,#c0392b)] text-sm">
+          ⚠ AdMob earnings haven&apos;t updated since <strong>{fmtDay(latestAdmobDay)}</strong> — the
+          data is stale. The OAuth refresh token has most likely expired (Google revokes them after
+          7&nbsp;days while the consent screen is in &quot;Testing&quot;). Renew it via{" "}
+          <code>admob-oauth.mjs</code>, then update <code>ADMOB_REFRESH_TOKEN</code> in Vercel and{" "}
+          <code>.env.local</code>; publish the OAuth consent screen to stop the 7-day expiry.
+        </Card>
+      )}
+
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Lifetime earnings" value={eur(life.earnings)} />
         <Stat label="This month" value={eur(thisMonth)} />
-        <Stat label="Today" value={eur(today)} />
+        <Stat label={latestAdmobDay ? `Latest day · ${fmtDay(latestAdmobDay)}` : "Latest day"} value={eur(latestAdmobEarnings)} />
         <Stat label="Blended eCPM" value={eur(ecpm)} />
         <Stat label="Lifetime impressions" value={life.impressions.toLocaleString()} />
         <Stat label="Ad requests" value={life.requests.toLocaleString()} />
