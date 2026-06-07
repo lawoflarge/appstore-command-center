@@ -12,8 +12,9 @@ App Store Connect's web UI is fine for one-off lookups and useless as a daily dr
 
 | Page | What you see |
 |------|-------------|
-| **Glance** | Today's downloads, lifetime totals, blended rating, top anomaly per app |
+| **Glance** | Latest-day downloads against one shared reference day (apps Apple hasn't published yet show **N/A**, never a stale number), this-month totals, blended rating, top anomaly per app |
 | **Portfolio** | Cross-app ranking by attention score (anomaly + rating delta + unresponded reviews) |
+| **Revenue** | Unified revenue (AdMob ad earnings + App Store in-app & subscription proceeds), with the in-app/subscription proceeds broken down **by app** and **by day**, plus AdMob by day/month/app/ad-unit |
 | **App detail** | Daily sales sparkline, funnel, ratings trend, reviews list per app |
 | **ASO** | iTunes-Search rank tracker per watched keyword + country |
 | **Reviews** | Cross-app review feed, filterable by rating/territory/responded |
@@ -24,6 +25,7 @@ App Store Connect's web UI is fine for one-off lookups and useless as a daily dr
 
 - The keyword layer uses the free public iTunes Search API — it records where your app appears in storefront search results for watched terms. It's a valid trend signal, **not** ASA-paid rank and **not** exact organic rank.
 - **Day-0 expectation:** Apple's Sales Reports have a ~24h publication lag. Analytics ONGOING report requests take ~24h after first creation to publish their first instance. Expect mostly zeros for the first 24-48 hours, real signal from the second daily cron onwards.
+- **Shared latest day:** Glance pins every app to one reference day (the freshest day any app has). Apps Apple hasn't published that day for yet show **N/A** rather than their own older value, so the summary and the chart never contradict each other. In-app proceeds revenue is reported by Apple as a money amount, not a transaction count, so the Revenue tab breaks down proceeds (not number of purchases).
 - **Vercel Hobby 60s function cap.** The cron parallelizes per-app and fits ~10 apps comfortably; beyond that you may need to split it.
 - **One user.** Auth is locked to a single GitHub username via the `signIn` callback. Not built for teams.
 

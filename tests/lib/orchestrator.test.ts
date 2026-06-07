@@ -78,6 +78,26 @@ test("one app's analytics failure does not affect another app", async () => {
   expect(status.perApp["2"].sales.ok).toBe(true);
 });
 
+test("analytics rolling-window rows are filed by their OWN month, not all into today's month file", async () => {
+  // Apple's analytics report is a rolling multi-day window; on 06-02 it still includes late-May days.
+  // Each row must land in its own month file (like sales) so a day never duplicates across months.
+  const store = memStore();
+  const a = (day: string, downloads: number) => ({ day, impressions: 0, pageViews: 0, downloads, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: {} });
+  await runDailyCollection({
+    day: "2026-06-02", store: store as any,
+    deps: okDeps({
+      collectAnalytics: async () => ({
+        "2026-05-31": a("2026-05-31", 7),
+        "2026-06-01": a("2026-06-01", 3),
+        "2026-06-02": a("2026-06-02", 1),
+      }),
+    }),
+  });
+  expect(store.fs.has("data/1/analytics/2026-05.json")).toBe(true);
+  expect(store.fs.get("data/1/analytics/2026-05.json").map((r: any) => r.day)).toEqual(["2026-05-31"]);
+  expect(store.fs.get("data/1/analytics/2026-06.json").map((r: any) => r.day)).toEqual(["2026-06-01", "2026-06-02"]);
+});
+
 test("runIntelligence failure is isolated, recorded, and blocks lastSuccess", async () => {
   const store = memStore();
   const status = await runDailyCollection({

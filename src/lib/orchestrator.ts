@@ -122,7 +122,18 @@ export async function runDailyCollection(input: {
       const analyticsDays = await deps.collectAnalytics(id);
       const aDays = Object.values(analyticsDays) as AnalyticsDay[];
       collected[id].analytics = aDays;
-      if (aDays.length) await store.upsertDailyArray(analyticsPath(id, day), aDays as any[], `data: analytics ${id}`);
+      // The analytics report is a rolling multi-day window that can straddle a month boundary. File
+      // each row under ITS OWN month (like the sales write above) — dumping the whole window into
+      // today's month file duplicated late-previous-month days across two files, which double-counts
+      // in funnel/breakdown reads and resolves to stale values in day-keyed maps.
+      const byMonth = new Map<string, AnalyticsDay[]>();
+      for (const r of aDays) {
+        const arr = byMonth.get(r.day.slice(0, 7));
+        if (arr) arr.push(r); else byMonth.set(r.day.slice(0, 7), [r]);
+      }
+      for (const rows of byMonth.values()) {
+        await store.upsertDailyArray(analyticsPath(id, rows[0].day), rows as any[], `data: analytics ${id} ${rows[0].day.slice(0, 7)}`);
+      }
       mark(id, "analytics", true, { rows: aDays.length });
     } catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
 

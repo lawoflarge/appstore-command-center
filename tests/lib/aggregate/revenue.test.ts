@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRevenue } from "@/lib/aggregate/revenue";
+import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
 import type { AdMobRow } from "@/lib/sources/admob";
 import type { SalesDay } from "@/lib/store/paths";
 
@@ -36,5 +36,34 @@ describe("buildRevenue", () => {
     expect(empty.total).toBe(0);
     expect(empty.adShare).toBe(0);
     expect(empty.byDay).toEqual([]);
+  });
+});
+
+describe("buildIapBreakdown", () => {
+  const s = (day: string, proceedsUsd: number): SalesDay => ({ day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd });
+
+  it("breaks IAP/subscription proceeds down per app and per day, dropping zero-proceeds apps", () => {
+    const r = buildIapBreakdown([
+      { appId: "1", name: "NetGuard", sales: [s("2026-06-02", 6.38), s("2026-06-05", 3.39)] },
+      { appId: "2", name: "Soccer",   sales: [s("2026-06-05", 0)] },
+      { appId: "3", name: "PulseCheck", sales: [s("2026-06-02", 1.0)] },
+    ]);
+    expect(r.totalProceeds).toBe(10.77);
+    // sorted by proceeds desc, apps with 0 excluded
+    expect(r.byApp).toEqual([
+      { appId: "1", name: "NetGuard", proceeds: 9.77 },
+      { appId: "3", name: "PulseCheck", proceeds: 1.0 },
+    ]);
+    // per-day proceeds summed across apps, ordered
+    expect(r.byDay).toEqual([
+      { day: "2026-06-02", proceeds: 7.38 },
+      { day: "2026-06-05", proceeds: 3.39 },
+    ]);
+    expect(r.appsWithRevenue).toBe(2);
+  });
+
+  it("is empty-safe", () => {
+    const r = buildIapBreakdown([{ appId: "1", name: "X", sales: [] }]);
+    expect(r).toEqual({ totalProceeds: 0, byApp: [], byDay: [], appsWithRevenue: 0 });
   });
 });

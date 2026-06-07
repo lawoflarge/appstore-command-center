@@ -18,3 +18,15 @@ export function dayRange(from: string, to: string): string[] {
 export function todayUtc(): string {
   return ymd(new Date());
 }
+
+/**
+ * Keep only the rows that belong in `monthStart`'s month (YYYY-MM). Use when flattening
+ * partitioned month files: Apple's rolling analytics window can spill a previous month's days into
+ * the current month file, so the same day would otherwise appear in two files and be double-counted
+ * (funnel/breakdowns) or resolve to a stale value (last-write-wins). Filtering each file to its own
+ * month makes every day canonical to exactly one file.
+ */
+export function rowsInMonth<T extends { day: string }>(rows: T[], monthStart: string): T[] {
+  const m = monthStart.slice(0, 7);
+  return rows.filter((r) => r.day.slice(0, 7) === m);
+}

@@ -3,6 +3,7 @@ import {
   salesPath, analyticsPath, ratingsPath, reviewsPath, keywordsPath, appMetaPath,
   type SalesDay, type AnalyticsDay, type RatingPoint, type Review, type KeywordRank, type AppMeta,
 } from "@/lib/store/paths";
+import { rowsInMonth } from "@/lib/dates";
 import type { RawBundle } from "./series";
 
 function lastNMonths(today: string, n: number): string[] {
@@ -35,10 +36,13 @@ export async function loadRawBundle(
       Promise.all(monthStarts.map((m) => store.readJson<RatingPoint[]>(ratingsPath(id, m), []))),
       Promise.all(monthStarts.map((m) => store.readJson<KeywordRank[]>(keywordsPath(id, m), []))),
     ]);
-    sales[id]     = s.flat();
-    analytics[id] = a.flat();
-    ratings[id]   = r.flat();
-    keywords[id]  = k.flat();
+    // Filter each month file to its own month before flattening — Apple's rolling analytics window
+    // can spill a prior month's days into the current file, which would double-count in funnel /
+    // breakdown reads (they sum every row) and resolve to stale values in the day-keyed maps.
+    sales[id]     = s.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
+    analytics[id] = a.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
+    ratings[id]   = r.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
+    keywords[id]  = k.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
     reviews[id]   = await store.readJson<Review[]>(reviewsPath(id), []);
   }));
 

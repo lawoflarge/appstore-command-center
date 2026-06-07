@@ -35,7 +35,7 @@ export default async function Portfolio() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="num text-right text-sm"><span className="font-semibold">{a.today}</span> today · {a.total.toLocaleString()} total</span>
+                <span className="num text-right text-sm"><span className="font-semibold">{a.today ?? "N/A"}</span> latest · {a.total.toLocaleString()} total</span>
                 <span aria-hidden className="text-[var(--ink-2)]">›</span>
               </div>
             </div>

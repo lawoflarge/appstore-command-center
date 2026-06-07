@@ -2,12 +2,13 @@ import { Nav } from "@/components/glass/Nav";
 import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
-import { admobPath, salesPath, type SalesDay } from "@/lib/store/paths";
+import { admobPath, salesPath, appMetaPath, type SalesDay, type AppMeta } from "@/lib/store/paths";
 import type { AdMobRow } from "@/lib/sources/admob";
-import { todayUtc } from "@/lib/dates";
+import { todayUtc, rowsInMonth } from "@/lib/dates";
 import { visibleAppIds } from "@/lib/aggregate/api";
-import { buildRevenue } from "@/lib/aggregate/revenue";
+import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
 import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
+import { IapCharts } from "@/components/revenue/IapCharts";
 
 export const dynamic = "force-dynamic";
 
@@ -51,13 +52,18 @@ export default async function Revenue() {
   );
   const all = arrays.flat();
 
-  // App Store proceeds (IAP / subscriptions) across all visible apps, merged with AdMob
-  // into one unified revenue view.
+  // App Store proceeds (IAP / subscriptions) per visible app — month-filtered so Apple's rolling
+  // analytics window can't spill a prior month's day into the current file and double-count. Feeds
+  // both the unified revenue view (merged with AdMob) and the per-app/per-day IAP breakdown.
   const ids = await visibleAppIds(store);
-  const salesArrays = await Promise.all(
-    ids.flatMap((id) => months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
-  );
-  const rev = buildRevenue(all, salesArrays.flat());
+  const appSales = await Promise.all(ids.map(async (id) => {
+    const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
+    const perMonth = await Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), [])));
+    const sales = perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
+    return { appId: id, name: meta?.name ?? id, sales };
+  }));
+  const rev = buildRevenue(all, appSales.flatMap((a) => a.sales));
+  const iap = buildIapBreakdown(appSales);
 
   const dayMap = new Map<string, Acc>();
   const monMap = new Map<string, Acc>();
@@ -113,6 +119,30 @@ export default async function Revenue() {
             ? <>In-app &amp; subscription proceeds come from Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization). Ads are AdMob estimates.</>
             : <>No in-app or subscription proceeds reported yet. App Store IAP/subscription proceeds appear here from Apple&apos;s daily sales report (Sales and Trends), ~24–48h after a sale.</>}
         </Card>
+      </section>
+
+      {/* In-app purchases & subscriptions — broken down by app and by day */}
+      <section className="mb-6">
+        <h2 className="mb-2 text-lg font-semibold">In-app purchases &amp; subscriptions</h2>
+        <p className="mb-4 text-xs text-[var(--ink-2)]">
+          App Store developer proceeds from in-app purchases &amp; subscriptions, by app and by day.
+          From Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization).
+          Amounts summed at reported value (no FX). Apple reports proceeds, not a transaction count.
+        </p>
+        <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Stat label="IAP &amp; subs total" value={eur(iap.totalProceeds)} />
+          <Stat label="Apps earning" value={String(iap.appsWithRevenue)} />
+          <Stat label="IAP share" value={rev.total > 0 ? pct(rev.iapShare) : "—"} />
+          <Stat label="Top app" value={iap.byApp[0]?.name ?? "—"} />
+        </div>
+        {iap.totalProceeds > 0 ? (
+          <IapCharts byDay={iap.byDay} byApp={iap.byApp} currency={CURRENCY} />
+        ) : (
+          <Card className="text-sm">
+            No in-app or subscription proceeds reported yet. They appear here from Apple&apos;s daily
+            sales report (Sales and Trends), ~24–48h after a sale.
+          </Card>
+        )}
       </section>
 
       <h2 className="mb-2 text-lg font-semibold">Ad revenue (AdMob)</h2>

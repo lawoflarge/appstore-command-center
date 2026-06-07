@@ -14,7 +14,7 @@ vi.mock("recharts", async (importOriginal) => {
 });
 
 import { Area } from "@/components/charts/viz/Area";
-import { MultiLine } from "@/components/charts/viz/MultiLine";
+import { MultiLine, multiLineRows } from "@/components/charts/viz/MultiLine";
 import { StackedArea } from "@/components/charts/viz/StackedArea";
 import { Bar } from "@/components/charts/viz/Bar";
 import { Funnel } from "@/components/charts/viz/Funnel";
@@ -51,6 +51,16 @@ describe("MultiLine viz", () => {
       ],
     }} />);
     expect(container.querySelectorAll(".recharts-line").length).toBe(2);
+  });
+
+  it("aligns rows with null (a gap), not 0, for a day a series lacks — no false cliff to zero", () => {
+    const rows = multiLineRows([
+      { key: "a", label: "Alpha", points: [{ day: "2026-06-05", value: 3 }, { day: "2026-06-06", value: 2 }] },
+      { key: "b", label: "Beta",  points: [{ day: "2026-06-05", value: 4 }] }, // no 2026-06-06 row
+    ]);
+    const jun6 = rows.find((r) => r.day === "2026-06-06")!;
+    expect(jun6.a).toBe(2);
+    expect(jun6.b).toBeNull(); // NOT 0 — a missing day must be a gap, not a plunge to zero
   });
 });
 

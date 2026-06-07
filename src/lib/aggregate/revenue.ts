@@ -42,3 +42,36 @@ export function buildRevenue(admob: AdMobRow[], sales: SalesDay[]): RevenueSumma
     byDay,
   };
 }
+
+// Per-app / per-day breakdown of App Store in-app-purchase & subscription proceeds. The unified
+// summary above only carries one IAP number; this gives the Revenue tab the same "by app" and
+// "by day" view it already has for AdMob. (Apple's daily sales report carries proceeds, not a
+// separate transaction count, so this is a revenue breakdown, not a purchase count.)
+export interface IapBreakdown {
+  totalProceeds: number;
+  byApp: { appId: string; name: string; proceeds: number }[]; // desc, apps with >0 only
+  byDay: { day: string; proceeds: number }[];                 // ascending by day
+  appsWithRevenue: number;
+}
+
+export function buildIapBreakdown(
+  apps: { appId: string; name: string; sales: SalesDay[] }[],
+): IapBreakdown {
+  const byApp: IapBreakdown["byApp"] = [];
+  const dayMap = new Map<string, number>();
+  for (const { appId, name, sales } of apps) {
+    let appProceeds = 0;
+    for (const s of sales) {
+      if (!s.proceedsUsd) continue;
+      appProceeds += s.proceedsUsd;
+      dayMap.set(s.day, (dayMap.get(s.day) ?? 0) + s.proceedsUsd);
+    }
+    if (appProceeds > 0) byApp.push({ appId, name, proceeds: round2(appProceeds) });
+  }
+  byApp.sort((a, b) => b.proceeds - a.proceeds);
+  const byDay = [...dayMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, p]) => ({ day, proceeds: round2(p) }));
+  const totalProceeds = round2(byApp.reduce((s, a) => s + a.proceeds, 0));
+  return { totalProceeds, byApp, byDay, appsWithRevenue: byApp.length };
+}
