@@ -47,21 +47,24 @@ export default async function Glance() {
   const topActions = buildActionItems(insights).slice(0, 3);
   const dashboardApps = ids.map((id) => ({ id, name: raw.apps[id]?.name ?? id }));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
-  const today = g.apps.reduce((s, a) => s + a.today, 0);
+  // Latest-day total sums only apps that HAVE data for the shared latest day; an app still lagging
+  // contributes null → 0 here and renders "N/A" in its row (never a stale value under a newer date).
+  const today = g.apps.reduce((s, a) => s + (a.today ?? 0), 0);
+  const naCount = g.apps.filter((a) => a.today === null).length;
   const rating = g.blendedRating;
   const latestDay = g.latestDay;
   const lastRunCopy = status
     ? `Last cron ${fmtAgo(status.lastRun)} · ${ids.length} app${ids.length === 1 ? "" : "s"} discovered`
     : "First cron hasn't run. Either wait for 06:00 UTC or trigger /api/cron with the secret.";
   const dataThroughCopy = latestDay
-    ? `App Store data through ${fmtDay(latestDay)} — Apple publishes downloads 24–48h late, so the current day is not a bug. AdMob revenue is near real-time.`
+    ? `App Store data through ${fmtDay(latestDay)} — Apple publishes downloads 24–48h late, so the current day is not a bug. AdMob revenue is near real-time.${naCount > 0 ? ` ${naCount} app${naCount === 1 ? "" : "s"} show N/A — no data for ${fmtDay(latestDay)} yet.` : ""}`
     : null;
   return (
     <main>
       <Nav />
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Total downloads" value={total.toLocaleString()} />
+        <Stat label="Downloads (this month)" value={total.toLocaleString()} />
         <Stat label={latestDay ? `Latest day · ${fmtDay(latestDay)}` : "Latest day"} value={today.toLocaleString()} />
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
@@ -92,7 +95,11 @@ export default async function Glance() {
               <span className="truncate font-semibold">{a.name}</span>
               <span className="flex items-center gap-2 whitespace-nowrap">
                 {a.rating?.count ? <span className="text-xs text-[var(--star)]">★ {a.rating.avg.toFixed(2)}</span> : null}
-                <span className="num text-lg"><span className="font-semibold">{a.today}</span> latest</span>
+                {a.today === null ? (
+                  <span className="num text-lg text-[var(--ink-2)]" title={`No data for ${fmtDay(latestDay)} yet`}>N/A</span>
+                ) : (
+                  <span className="num text-lg"><span className="font-semibold">{a.today}</span> latest</span>
+                )}
                 <span aria-hidden className="text-[var(--ink-2)]">›</span>
               </span>
             </div>

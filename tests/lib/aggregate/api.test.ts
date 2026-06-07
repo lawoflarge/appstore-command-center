@@ -17,6 +17,33 @@ test("buildGlance assembles totals + rating + insights per visible app", async (
   expect(g.blendedRating).toEqual({ avg: 4.5, count: 100 });
 });
 
+test("buildGlance reports each app's value AT the shared latest day, N/A (null) when that app has no row for it", async () => {
+  // "Fresh" has analytics through 2026-06-06; "Lagging" only through 2026-06-05.
+  // The shared latest day is 2026-06-06. Lagging must NOT contribute its stale 06-05 value
+  // under the 06-06 label — that is the reported Glance/chart contradiction.
+  const a = (day: string, downloads: number) => ({
+    day, impressions: 0, pageViews: 0, downloads, sessions: 0,
+    activeDevices: 0, deletions: 0, crashes: 0, bySource: {},
+  });
+  const store = {
+    readJson: async (p: string, fb: any) => {
+      if (p === "data/config.json") return { apps: {} };
+      if (p === "data/1/meta.json") return { appId: "1", name: "Fresh", hidden: false, archived: false, releases: [] };
+      if (p === "data/2/meta.json") return { appId: "2", name: "Lagging", hidden: false, archived: false, releases: [] };
+      if (p === "data/1/analytics/2026-06.json") return [a("2026-06-05", 3), a("2026-06-06", 2)];
+      if (p === "data/2/analytics/2026-06.json") return [a("2026-06-04", 1), a("2026-06-05", 4)];
+      if (p === "data/insights.json") return { apps: {} };
+      return fb;
+    },
+  };
+  const g = await buildGlance(store as any, ["1", "2"], "2026-06");
+  expect(g.latestDay).toBe("2026-06-06");
+  const fresh = g.apps.find((x: any) => x.appId === "1")!;
+  const lagging = g.apps.find((x: any) => x.appId === "2")!;
+  expect(fresh.today).toBe(2);        // value at the shared latest day
+  expect(lagging.today).toBeNull();   // no 2026-06-06 row → N/A, not the stale 4
+});
+
 test("visibleAppIds returns all discovered apps when config is empty (day-0 default)", async () => {
   const store = {
     readJson: async (p: string, fb: any) => {
