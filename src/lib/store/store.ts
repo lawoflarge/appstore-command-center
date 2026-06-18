@@ -72,15 +72,24 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
       });
       readCache.delete(path);
     },
-    /** Merge rows into an array-of-{day} file, replacing same-day entries. */
+    /**
+     * Merge rows into an array-of-{day} file, replacing same-day entries.
+     * Pass `merge` to combine an incoming row with the existing same-day row instead of
+     * the default newest-wins replace — used by analytics so a re-fetched 0 (Apple drops
+     * aged days out of the rolling window) can't wipe a previously recorded positive.
+     */
     async upsertDailyArray<T extends { day: string }>(
       path: string, rows: T[], message: string,
+      merge?: (prev: T, incoming: T) => T,
     ): Promise<void> {
       await retryOn409(async () => {
         const existing = await gh.get<T[]>(path);
         const map = new Map<string, T>();
         for (const r of existing?.value ?? []) map.set(r.day, r);
-        for (const r of rows) map.set(r.day, r);
+        for (const r of rows) {
+          const prev = map.get(r.day);
+          map.set(r.day, prev && merge ? merge(prev, r) : r);
+        }
         const merged = [...map.values()].sort((a, b) => a.day.localeCompare(b.day));
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
