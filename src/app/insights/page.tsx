@@ -15,7 +15,7 @@ const SECTIONS: { tier: Severity; heading: string }[] = [
 ];
 
 export default async function InsightsPage() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const insights = await store.readJson<Insights>(insightsPath(), { generatedAt: "", apps: {} });
   const items = buildActionItems(insights);
   const entries = Object.entries(insights.apps) as [string, AppInsight][];

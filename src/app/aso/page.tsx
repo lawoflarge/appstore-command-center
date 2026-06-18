@@ -29,7 +29,7 @@ function rankColor(rank: number | null): string {
 }
 
 export default async function Aso() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const month = todayUtc().slice(0, 7);
   const ids = await visibleAppIds(store);
   const insights = await store.readJson<Insights>(insightsPath(), { generatedAt: "", apps: {} });
