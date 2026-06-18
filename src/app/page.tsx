@@ -36,7 +36,7 @@ function fmtDay(iso: string): string {
 }
 
 export default async function Glance() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
   const ids = await visibleAppIds(store);
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));

@@ -7,7 +7,7 @@ import { AppSettingsRow } from "@/components/settings/AppSettingsRow";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const status = await store.readJson<RunStatus | null>(runStatusPath(), null);
   const cfg = await store.readJson<Config>(configPath(), { apps: {} });
   const ids = status ? Object.keys(status.perApp) : [];

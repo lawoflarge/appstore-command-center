@@ -7,7 +7,7 @@ import { reviewsPath, type Review } from "@/lib/store/paths";
 export const dynamic = "force-dynamic";
 
 export default async function Reviews() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const ids = await visibleAppIds(store);
   const all: { appId: string; r: Review }[] = [];
   for (const id of ids) {

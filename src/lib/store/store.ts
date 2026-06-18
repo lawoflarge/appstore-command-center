@@ -37,10 +37,32 @@ async function retryOn409<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export function makeStore(gh: GhBackend) {
+// Per-instance read cache for page renders. Pages are force-dynamic and read
+// hundreds of small JSON files per render through the GitHub Contents API (one
+// request per file). Without caching, every reload re-fetched all of them, so a
+// handful of reloads/refreshes exhausted GitHub's 5,000 req/hr limit — reads then
+// 403'd and the whole dashboard threw a server-side exception until the rate window
+// reset. The data changes only once a day (the cron), so a short TTL is safe.
+// Opt-in via `cacheReads` so read-modify-write callers (the config writer, the cron
+// collection) keep reading fresh; writes always drop their own path so an in-app
+// save or refresh shows new data immediately on a warm instance.
+const READ_TTL_MS = 300_000;
+const readCache = new Map<string, { value: unknown; at: number }>();
+
+export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
+  async function readRaw<T>(path: string): Promise<{ value: T; sha: string } | null> {
+    if (!opts.cacheReads) return gh.get<T>(path);
+    const hit = readCache.get(path);
+    if (hit && Date.now() - hit.at < READ_TTL_MS) {
+      return hit.value as { value: T; sha: string } | null;
+    }
+    const r = await gh.get<T>(path);
+    readCache.set(path, { value: r, at: Date.now() });
+    return r;
+  }
   return {
     async readJson<T>(path: string, fallback: T): Promise<T> {
-      const r = await gh.get<T>(path);
+      const r = await readRaw<T>(path);
       return r ? r.value : fallback;
     },
     async writeJson(path: string, value: unknown, message: string): Promise<void> {
@@ -48,6 +70,7 @@ export function makeStore(gh: GhBackend) {
         const existing = await gh.get(path);
         await gh.put(path, value, existing?.sha ?? null, message);
       });
+      readCache.delete(path);
     },
     /** Merge rows into an array-of-{day} file, replacing same-day entries. */
     async upsertDailyArray<T extends { day: string }>(
@@ -61,6 +84,7 @@ export function makeStore(gh: GhBackend) {
         const merged = [...map.values()].sort((a, b) => a.day.localeCompare(b.day));
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
+      readCache.delete(path);
     },
     /** Merge rows into an array file keyed by a composite key, replacing dupes. */
     async upsertKeyedArray<T>(
@@ -74,6 +98,7 @@ export function makeStore(gh: GhBackend) {
         const merged = [...map.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
+      readCache.delete(path);
     },
   };
 }

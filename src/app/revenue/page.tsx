@@ -51,7 +51,7 @@ function fmtDay(iso: string): string {
 }
 
 export default async function Revenue() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const now = todayUtc();
   const curMonth = now.slice(0, 7);
   const months = lastMonths(curMonth, 18);

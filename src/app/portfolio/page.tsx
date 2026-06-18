@@ -9,7 +9,7 @@ import { todayUtc } from "@/lib/dates";
 export const dynamic = "force-dynamic";
 
 export default async function Portfolio() {
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const ids = await visibleAppIds(store);
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
   const rows = rankPortfolio(g.apps.map((a) => ({

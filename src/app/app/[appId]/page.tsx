@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AppDetail({ params }: { params: Promise<{ appId: string }> }) {
   const { appId } = await params;
-  const store = makeStore(ghBackendFromEnv());
+  const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const meta = await store.readJson<AppMeta | null>(appMetaPath(appId), null);
   const dashboards = await store.readJson<DashboardsFile>(dashboardsPath(), { byId: {} });
   const slice = dashboards.byId[`app:${appId}`] ?? defaultsFor(`app:${appId}`);
