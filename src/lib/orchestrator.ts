@@ -21,6 +21,22 @@ function sumFunnel(rows: AnalyticsDay[]): FunnelStage {
   );
 }
 
+// Apple's ONGOING analytics report is a rolling window: a date ages out after ~16 days and the
+// report then reports it as 0 (or only as a non-download row), which a plain newest-wins merge
+// would write straight over the real, previously-collected count — silently zeroing each app's
+// oldest day, one per day, and undercounting lifetime downloads (NetGuard lost Jun-1=13 + Jun-2=35).
+// Treat an incoming 0 as "no data for this aged day", not a revision: keep the recorded positive.
+// A genuine non-zero revision (estimates settling) is still honored.
+export function mergeAnalyticsDay(prev: AnalyticsDay, inc: AnalyticsDay): AnalyticsDay {
+  return {
+    ...inc,
+    downloads: inc.downloads > 0 ? inc.downloads : prev.downloads,
+    impressions: inc.impressions > 0 ? inc.impressions : prev.impressions,
+    pageViews: inc.pageViews > 0 ? inc.pageViews : prev.pageViews,
+    bySource: inc.downloads > 0 ? inc.bySource : prev.bySource,
+  };
+}
+
 // Build a real intelligence input from the freshly collected analytics + keywords.
 // funnelToday = trailing 7 days, funnelBaseline = the 7 days before that ("this week
 // vs last week"), which is stable for the low daily volumes these apps see.
@@ -132,7 +148,7 @@ export async function runDailyCollection(input: {
         if (arr) arr.push(r); else byMonth.set(r.day.slice(0, 7), [r]);
       }
       for (const rows of byMonth.values()) {
-        await store.upsertDailyArray(analyticsPath(id, rows[0].day), rows as any[], `data: analytics ${id} ${rows[0].day.slice(0, 7)}`);
+        await store.upsertDailyArray(analyticsPath(id, rows[0].day), rows as any[], `data: analytics ${id} ${rows[0].day.slice(0, 7)}`, mergeAnalyticsDay as (p: any, i: any) => any);
       }
       mark(id, "analytics", true, { rows: aDays.length });
     } catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
