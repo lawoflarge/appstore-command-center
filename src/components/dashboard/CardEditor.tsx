@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { buildSeries, type RawBundle } from "@/lib/aggregate/series";
 import { VizRenderer } from "@/components/charts/viz/VizRenderer";
 import { vizForMetric, breakdownForMetric } from "@/lib/dashboards/compatibility";
+import { DEAD_METRICS } from "@/lib/dashboards/migrate";
 import type { ChartCard, Metric, Viz, Breakdown, Bucket, Range } from "@/lib/dashboards/types";
 
 const METRICS: { group: string; items: { id: Metric; label: string }[] }[] = [
@@ -26,6 +27,13 @@ const METRICS: { group: string; items: { id: Metric; label: string }[] }[] = [
   ]},
   { group: "Keywords", items: [{ id: "keywordRank", label: "Keyword rank" }]},
 ];
+
+// Metrics Apple never populates for these low-volume apps (sessions / active devices / deletions
+// / crashes) are dropped from the picker so a user can't build a permanently-empty chart. Empty
+// groups disappear. See DEAD_METRICS / migrateSlice, which heals any already-saved dead card.
+const METRIC_GROUPS = METRICS
+  .map((g) => ({ ...g, items: g.items.filter((m) => !DEAD_METRICS.has(m.id)) }))
+  .filter((g) => g.items.length > 0);
 
 const ALL_VIZ: Viz[] = ["area", "multiLine", "stackedArea", "bar", "funnel", "smallMultiples", "heatmap"];
 
@@ -80,7 +88,7 @@ export function CardEditor({
           value={draft.metric}
           onChange={(e) => update("metric", e.target.value as Metric)}
         >
-          {METRICS.map((g) => (
+          {METRIC_GROUPS.map((g) => (
             <optgroup key={g.group} label={g.group}>
               {g.items.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </optgroup>

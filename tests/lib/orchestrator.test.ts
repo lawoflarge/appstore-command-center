@@ -131,3 +131,41 @@ test("a store write failure is isolated and does not crash the whole run", async
   expect(store.fs.get("data/1/sales/2026-05.json")[0].total).toBe(5);
   expect(status.lastSuccess).toBe("");
 });
+
+// The cron round-robin + the refresh's per-app phases collect only a SUBSET of apps per
+// invocation (so a single run stays under Vercel's 60s cap). `appIds` restricts the per-app
+// work to that batch; `intelligence: false` defers the cross-app insights pass.
+test("appIds restricts per-app collection to the batch; intelligence:false skips insights", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    appIds: ["2"], intelligence: false,
+    deps: okDeps({
+      discoverApps: async () => [
+        { appId: "1", name: "A", bundleId: "b", sku: "s", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
+        { appId: "2", name: "B", bundleId: "b2", sku: "s2", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
+      ],
+      collectSales: async () => ({
+        "1": { day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 },
+        "2": { day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 },
+      }),
+    }),
+  });
+  expect(store.fs.get("data/2/sales/2026-05.json")[0].total).toBe(2);
+  expect(store.fs.has("data/1/sales/2026-05.json")).toBe(false); // app 1 not in this batch
+  expect(store.fs.has("data/insights.json")).toBe(false);        // intelligence deferred
+  expect(status.perApp["2"].sales.ok).toBe(true);
+  expect(status.perApp["1"]).toBeUndefined();
+});
+
+// A batch run persists its marks; a later finish pass (appIds: []) runs intelligence over ALL
+// apps from the store and MERGES status — it must not blank the earlier batch's marks.
+test("finish pass writes insights from store + merges status without re-collecting per-app", async () => {
+  const store = memStore();
+  await runDailyCollection({ day: "2026-05-18", store: store as any, appIds: ["1"], intelligence: false, deps: okDeps() });
+  expect(store.fs.has("data/insights.json")).toBe(false);
+
+  const status = await runDailyCollection({ day: "2026-05-18", store: store as any, appIds: [], intelligence: true, deps: okDeps() });
+  expect(store.fs.get("data/insights.json").generatedAt).toBe("2026-05-18");
+  expect(status.perApp["1"]?.sales?.ok).toBe(true); // earlier batch's mark survived the merge
+});

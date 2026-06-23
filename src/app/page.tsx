@@ -11,6 +11,7 @@ import { ActionCard } from "@/components/insights/ActionCard";
 import { todayUtc } from "@/lib/dates";
 import { ConfigurableDashboard } from "@/components/dashboard/ConfigurableDashboard";
 import { defaultsFor } from "@/lib/dashboards/defaults";
+import { migrateSlice } from "@/lib/dashboards/migrate";
 import { loadRawBundle } from "@/lib/aggregate/rawBundle";
 import type { DashboardsFile } from "@/lib/dashboards/types";
 
@@ -41,7 +42,7 @@ export default async function Glance() {
   const ids = await visibleAppIds(store);
   const g = await buildGlance(store, ids, todayUtc().slice(0, 7));
   const dashboards = await store.readJson<DashboardsFile>(dashboardsPath(), { byId: {} });
-  const glanceSlice = dashboards.byId["glance"] ?? defaultsFor("glance");
+  const glanceSlice = migrateSlice(dashboards.byId["glance"] ?? defaultsFor("glance"));
   const raw = await loadRawBundle(store, ids, todayUtc(), 4);
   const insights = await store.readJson<Insights>(insightsPath(), { generatedAt: "", apps: {} });
   const topActions = buildActionItems(insights).slice(0, 3);
