@@ -2,10 +2,11 @@ name: Sync App Store data
 
 # Vercel Hobby allows only ONE cron run per day, so the daily job in vercel.json
 # fires at 06:00 UTC. This free GitHub Actions schedule fills the gaps: it hits the
-# same /api/cron endpoint every 6 hours. ASC data still only advances once Apple
-# publishes a new day (~24-48h lag), but the extra runs catch that publication
-# sooner and keep near-real-time AdMob revenue fresh. The collection is idempotent
-# (append-only, dedup on write), so overlapping with the Vercel cron is harmless.
+# same /api/cron endpoint every 4 hours. /api/cron now collects one ROTATING batch of
+# apps per tick (it can't do the whole portfolio inside Vercel's 60s cap), so it needs
+# ~6 runs/day to sweep every app daily — hence 4h, not 6h. ASC data still only advances
+# once Apple publishes a new day (~24-48h lag); AdMob revenue refreshes every tick. The
+# collection is idempotent (append-only, dedup on write), so overlapping is harmless.
 #
 # Setup (one-time): add a repo secret CRON_SECRET matching the Vercel env var.
 #   gh secret set CRON_SECRET --repo lawoflarge/appstore-command-center
@@ -13,7 +14,7 @@ name: Sync App Store data
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */4 * * *"
   workflow_dispatch: {}
 
 concurrency:

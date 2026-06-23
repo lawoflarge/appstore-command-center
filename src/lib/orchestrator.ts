@@ -7,6 +7,7 @@ import {
 import type { Store } from "@/lib/store/store";
 import type { AppInput } from "@/lib/intelligence/engine";
 import type { FunnelStage } from "@/lib/intelligence/funnel";
+import { rowsInMonth } from "@/lib/dates";
 
 // Aggregate a contiguous slice of analytics days into one funnel stage. Rates are
 // ratios, so summing a window is equivalent to averaging it.
@@ -55,6 +56,35 @@ function buildAppInput(
   };
 }
 
+// The current month start and the previous one, as YYYY-MM-01 — enough history for the
+// trailing-14-day download series + this-week-vs-last-week funnel even right after a month
+// boundary, without fanning out into many file reads.
+function recentMonthStarts(day: string): string[] {
+  const cur = day.slice(0, 7) + "-01";
+  const d = new Date(day + "T00:00:00.000Z");
+  d.setUTCMonth(d.getUTCMonth() - 1);
+  return [d.toISOString().slice(0, 7) + "-01", cur];
+}
+
+// Build intelligence inputs for EVERY app from the persisted store rather than from the
+// in-memory data collected this run. A cron round-robin batch or a refresh batch only
+// touches a subset of apps, but insights must still cover the whole portfolio — reading
+// each app's freshly-written analytics + keywords back from the store makes a partial run
+// and a full run converge on the same result. Each month file is filtered to its own month
+// (rolling-window days can spill across the boundary) so a day is never double-counted.
+async function buildIntelInputsFromStore(
+  store: Store, apps: AppMeta[], day: string,
+): Promise<AppInput[]> {
+  const months = recentMonthStarts(day);
+  return Promise.all(apps.map(async (a) => {
+    const files = await Promise.all(
+      months.map((m) => store.readJson<AnalyticsDay[]>(analyticsPath(a.appId, m), [])));
+    const analytics = files.flatMap((rows, i) => rowsInMonth(rows, months[i]));
+    const keywords = await store.readJson<KeywordRank[]>(keywordsPath(a.appId, day), []);
+    return buildAppInput(a, analytics, keywords);
+  }));
+}
+
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
   collectSales: (apps: { appId: string; sku: string }[], day: string) => Promise<Record<string, any>>;
@@ -67,9 +97,20 @@ export interface OrchestratorDeps {
 
 export async function runDailyCollection(input: {
   day: string; store: Store; deps: OrchestratorDeps;
+  /** Restrict per-app collection to these ids (cron round-robin batch / refresh batch).
+   *  Omit to collect every discovered app. An empty array collects no per-app data —
+   *  used by the refresh "finish" call that only runs intelligence + status. */
+  appIds?: string[];
+  /** Run the intelligence pass + finalize run-status health. Default true. The refresh's
+   *  per-app batches pass false; one final call passes true. */
+  intelligence?: boolean;
 }): Promise<RunStatus> {
   const { day, store, deps } = input;
-  const apps = await deps.discoverApps();
+  const runIntel = input.intelligence ?? true;
+  const allApps = await deps.discoverApps();
+  const apps = input.appIds
+    ? allApps.filter((a) => input.appIds!.includes(a.appId))
+    : allApps;
   const config = await store.readJson<Config>(configPath(), { apps: {} });
 
   const status: RunStatus = {
@@ -104,23 +145,23 @@ export async function runDailyCollection(input: {
 
   const appIds = apps.map((a) => a.appId);
   let salesByApp: Record<string, any> = {};
-  try {
-    salesByApp = await deps.collectSales(apps, day);
-    appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id] ? 1 : 0 }));
-  } catch (e: any) {
-    appIds.forEach((id) => mark(id, "sales", false, { error: String(e?.message ?? e) }));
+  // Skip the account-wide sales walk entirely when this run collects no apps (the refresh
+  // "finish" phase, appIds: []) — otherwise collectSales walks all 5 lag days looking for a
+  // row that can never match an empty app set, burning ~5 sequential ASC TSV fetches for nothing.
+  if (apps.length > 0) {
+    try {
+      salesByApp = await deps.collectSales(apps, day);
+      appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id] ? 1 : 0 }));
+    } catch (e: any) {
+      appIds.forEach((id) => mark(id, "sales", false, { error: String(e?.message ?? e) }));
+    }
   }
 
   // Per-app work runs in parallel — each app writes to distinct paths so there's no
   // contention, and the GitHub Contents API handles concurrent commits. Serial loop
   // blew the 60s Hobby function cap once analytics started doing real CSV downloads.
-  // Captured from the parallel pass so the intelligence input can be built from real
-  // collected data instead of the zeroed placeholder it used before.
-  const collected: Record<string, { analytics: AnalyticsDay[]; keywords: KeywordRank[] }> = {};
-
   const perApp = apps.map(async (a) => {
     const id = a.appId;
-    collected[id] = { analytics: [], keywords: [] };
     // Sales rows carry a lagged report date (see cron route); file them under their own
     // day so a month-boundary lag lands in the correct month file. The write is guarded
     // (like every other per-app write below): a transient GitHub Contents API error must
@@ -137,7 +178,6 @@ export async function runDailyCollection(input: {
     try {
       const analyticsDays = await deps.collectAnalytics(id);
       const aDays = Object.values(analyticsDays) as AnalyticsDay[];
-      collected[id].analytics = aDays;
       // The analytics report is a rolling multi-day window that can straddle a month boundary. File
       // each row under ITS OWN month (like the sales write above) — dumping the whole window into
       // today's month file duplicated late-previous-month days across two files, which double-counts
@@ -170,7 +210,6 @@ export async function runDailyCollection(input: {
     try {
       const watch = config.apps[id]?.keywords ?? [];
       const kr = await deps.collectKeywords(id, day);
-      collected[id].keywords = kr as KeywordRank[];
       if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
       void watch;
       mark(id, "keywords", true, { rows: kr.length });
@@ -178,20 +217,37 @@ export async function runDailyCollection(input: {
   });
   await Promise.all(perApp);
 
-  const intelInputs = apps.map((a) =>
-    buildAppInput(a, collected[a.appId]?.analytics ?? [], collected[a.appId]?.keywords ?? []));
-
-  try {
-    const insights = await deps.runIntelligence({ day, apps: intelInputs });
-    await store.writeJson(insightsPath(), insights, `data: insights ${day}`);
-  } catch (e: any) {
-    apps.forEach((a) => mark(a.appId, "intelligence", false, { error: String(e?.message ?? e) }));
+  // Intelligence must reflect EVERY app, not just the ones collected in this (possibly
+  // partial) run — the cron processes a rotating batch and the refresh collects in batches.
+  // Build the inputs from the persisted store for all discovered apps so a full run and a
+  // batch run converge on the same insights.
+  if (runIntel) {
+    try {
+      const intelInputs = await buildIntelInputsFromStore(store, allApps, day);
+      const insights = await deps.runIntelligence({ day, apps: intelInputs });
+      await store.writeJson(insightsPath(), insights, `data: insights ${day}`);
+    } catch (e: any) {
+      allApps.forEach((a) => mark(a.appId, "intelligence", false, { error: String(e?.message ?? e) }));
+    }
   }
 
-  status.lastSuccess = hadFailure ? "" : new Date().toISOString();
-  // Persist the run status, but never let a transient write here throw away an
-  // otherwise-completed run — the caller still gets the status to return.
-  try { await store.writeJson(runStatusPath(), status, `data: run-status ${day}`); }
-  catch { /* status persistence is best-effort; the run already did its work */ }
-  return status;
+  // Merge this run's marks into the existing status so a batch run updates only the apps it
+  // touched and never blanks the others. lastSuccess reflects whole-portfolio health: set
+  // only when no app — including ones collected in an earlier batch — carries a failed mark.
+  // Best-effort: a transient status write never discards the work already done.
+  try {
+    const prev = await store.readJson<RunStatus>(runStatusPath(), { lastRun: "", lastSuccess: "", perApp: {} });
+    const perAppMerged: RunStatus["perApp"] = { ...prev.perApp };
+    for (const [id, marks] of Object.entries(status.perApp)) {
+      perAppMerged[id] = { ...perAppMerged[id], ...marks };
+    }
+    const anyFailure = Object.values(perAppMerged).some((m) => Object.values(m).some((x) => !x.ok));
+    const now = new Date().toISOString();
+    const merged: RunStatus = { lastRun: now, lastSuccess: anyFailure ? "" : now, perApp: perAppMerged };
+    await store.writeJson(runStatusPath(), merged, `data: run-status ${day}`);
+    return merged;
+  } catch {
+    status.lastSuccess = hadFailure ? "" : new Date().toISOString();
+    return status;
+  }
 }
