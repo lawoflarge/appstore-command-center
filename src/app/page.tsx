@@ -58,7 +58,7 @@ export default async function Glance() {
     ? `Last cron ${fmtAgo(status.lastRun)} · ${ids.length} app${ids.length === 1 ? "" : "s"} discovered`
     : "First cron hasn't run. Either wait for 06:00 UTC or trigger /api/cron with the secret.";
   const dataThroughCopy = latestDay
-    ? `App Store data through ${fmtDay(latestDay)} — Apple publishes downloads 24–48h late, so the current day is not a bug. AdMob revenue is near real-time.${naCount > 0 ? ` ${naCount} app${naCount === 1 ? "" : "s"} show N/A — no data for ${fmtDay(latestDay)} yet.` : ""}`
+    ? `App Store data through ${fmtDay(latestDay)} — Apple publishes downloads 24–48h late, so the current day is not a bug. AdMob revenue is near real-time.${naCount > 0 ? ` ${naCount} app${naCount === 1 ? "" : "s"} show N/A — no download data yet.` : ""}`
     : null;
   return (
     <main>
@@ -66,7 +66,7 @@ export default async function Glance() {
       <h1 className="mb-5 text-2xl font-bold tracking-tight">Glance</h1>
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Total downloads" value={total.toLocaleString()} />
-        <Stat label={latestDay ? `Latest day · ${fmtDay(latestDay)}` : "Latest day"} value={today.toLocaleString()} />
+        <Stat label="Latest-day downloads" value={today.toLocaleString()} />
         <Stat label="Avg rating" value={rating.count ? `${rating.avg.toFixed(2)}★` : "—"} />
         <Stat label="Apps tracked" value={String(g.apps.length)} />
       </div>
@@ -97,9 +97,14 @@ export default async function Glance() {
               <span className="flex items-center gap-2 whitespace-nowrap">
                 {a.rating?.count ? <span className="text-xs text-[var(--star)]">★ {a.rating.avg.toFixed(2)}</span> : null}
                 {a.today === null ? (
-                  <span className="num text-lg text-[var(--ink-2)]" title={`No data for ${fmtDay(latestDay)} yet`}>N/A</span>
+                  <span className="num text-lg text-[var(--ink-2)]" title="No download data yet">N/A</span>
                 ) : (
-                  <span className="num text-lg"><span className="font-semibold">{a.today}</span> latest</span>
+                  <span className="num text-lg">
+                    <span className="font-semibold">{a.today}</span> latest
+                    {a.latestDay && a.latestDay !== latestDay ? (
+                      <span className="ml-1 text-xs text-[var(--ink-2)]" title={`This app's latest day (others reach ${fmtDay(latestDay)})`}>· {fmtDay(a.latestDay)}</span>
+                    ) : null}
+                  </span>
                 )}
                 <span aria-hidden className="text-[var(--ink-2)]">›</span>
               </span>

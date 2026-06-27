@@ -20,7 +20,7 @@ const METRICS: { group: string; items: { id: Metric; label: string }[] }[] = [
     { id: "ratingsCount", label: "Ratings count" }, { id: "reviewCount", label: "Review count" },
     { id: "responseRate", label: "Response rate" },
   ]},
-  { group: "Money", items: [{ id: "proceedsUsd", label: "Proceeds (USD)" }]},
+  { group: "Money", items: [{ id: "proceedsUsd", label: "Proceeds (EUR)" }]},
   { group: "Derived", items: [
     { id: "convPageToInstall", label: "Page → install conv" },
     { id: "convImpressionToPage", label: "Impression → page conv" },

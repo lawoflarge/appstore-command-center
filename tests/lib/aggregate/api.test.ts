@@ -17,10 +17,11 @@ test("buildGlance assembles totals + rating + insights per visible app", async (
   expect(g.blendedRating).toEqual({ avg: 4.5, count: 100 });
 });
 
-test("buildGlance reports each app's value AT the shared latest day, N/A (null) when that app has no row for it", async () => {
-  // "Fresh" has analytics through 2026-06-06; "Lagging" only through 2026-06-05.
-  // The shared latest day is 2026-06-06. Lagging must NOT contribute its stale 06-05 value
-  // under the 06-06 label — that is the reported Glance/chart contradiction.
+test("buildGlance reports each app's OWN latest-day value (with its own date), so a fresher app pulling the portfolio max ahead never N/As the lagging ones", async () => {
+  // "Fresh" has analytics through 2026-06-06; "Lagging" only through 2026-06-05. The OLD design
+  // pinned every app to the portfolio-wide max (06-06) and showed N/A for Lagging — which is the
+  // real-world bug: one app a single day ahead turned the whole list to N/A. Each app must instead
+  // report the value at ITS OWN latest day, carrying that day so the UI can label it honestly.
   const a = (day: string, downloads: number) => ({
     day, impressions: 0, pageViews: 0, downloads, sessions: 0,
     activeDevices: 0, deletions: 0, crashes: 0, bySource: {},
@@ -37,11 +38,27 @@ test("buildGlance reports each app's value AT the shared latest day, N/A (null) 
     },
   };
   const g = await buildGlance(store as any, ["1", "2"], "2026-06");
-  expect(g.latestDay).toBe("2026-06-06");
+  expect(g.latestDay).toBe("2026-06-06");          // portfolio-wide max — headline "data through" only
   const fresh = g.apps.find((x: any) => x.appId === "1")!;
   const lagging = g.apps.find((x: any) => x.appId === "2")!;
-  expect(fresh.today).toBe(2);        // value at the shared latest day
-  expect(lagging.today).toBeNull();   // no 2026-06-06 row → N/A, not the stale 4
+  expect(fresh.today).toBe(2);
+  expect(fresh.latestDay).toBe("2026-06-06");
+  expect(lagging.today).toBe(4);                   // its OWN latest (06-05) value, NOT N/A
+  expect(lagging.latestDay).toBe("2026-06-05");
+});
+
+test("buildGlance still returns today=null only when an app has no rows at all", async () => {
+  const store = {
+    readJson: async (p: string, fb: any) => {
+      if (p === "data/config.json") return { apps: {} };
+      if (p === "data/1/meta.json") return { appId: "1", name: "Empty", hidden: false, archived: false, releases: [] };
+      if (p === "data/insights.json") return { apps: {} };
+      return fb; // no analytics / sales files → empty arrays
+    },
+  };
+  const g = await buildGlance(store as any, ["1"], "2026-06");
+  expect(g.apps[0].today).toBeNull();
+  expect(g.apps[0].latestDay).toBe("");
 });
 
 test("buildGlance sums LIFETIME downloads across all months since firstSeen, not just the current month", async () => {

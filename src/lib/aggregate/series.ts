@@ -41,7 +41,7 @@ function metricValueFromRow(
     const r = row as SalesDay;
     if (metric === "downloads") return r.total;
     if (metric === "redownloads") return r.redownloads;
-    if (metric === "proceedsUsd") return r.proceedsUsd;
+    if (metric === "proceedsUsd") return r.proceedsEur ?? r.proceedsUsd;
   }
   if (src === "analytics") {
     const r = row as AnalyticsDay;
