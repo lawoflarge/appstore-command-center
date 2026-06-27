@@ -15,6 +15,8 @@ const FALLBACK: EurRates = {
   PLN: 4.3, CZK: 25, HUF: 395, RON: 5.0, ZAR: 20, SGD: 1.45, HKD: 8.6, THB: 39,
   IDR: 17500, PHP: 62, MYR: 5.1, ILS: 4.0, AED: 4.04, SAR: 4.13, COP: 4400, CLP: 1050,
   PEN: 4.1, ARS: 1300, BGN: 1.96, RUB: 100, UAH: 45, VND: 28000, TWD: 35,
+  // Remaining App Store payout currencies the ECB feed omits, so an exotic-territory sale still converts.
+  EGP: 54, NGN: 1750, KZT: 580, QAR: 4.0, PKR: 310, TZS: 2900, KES: 145, MAD: 10.8,
 };
 
 // Fetch ECB reference rates for a given UTC day (YYYY-MM-DD), EUR-based. Frankfurter clamps a
@@ -36,7 +38,14 @@ export function toEur(byCcy: Record<string, number> | undefined, rates: EurRates
     if (!amount) continue;
     if (ccy === "EUR" || ccy === "") { eur += amount; continue; }
     const rate = rates[ccy] ?? FALLBACK[ccy];
-    eur += rate && rate > 0 ? amount / rate : amount;
+    if (!rate || rate <= 0) {
+      // No EUR rate (currency absent from both the live ECB feed and FALLBACK). Skip it rather than
+      // add the raw foreign amount as EUR — adding it raw is exactly the over-count bug this module
+      // exists to prevent. A skipped row slightly under-counts, but never silently inflates revenue.
+      console.warn(`fx.toEur: no EUR rate for "${ccy}"; excluded ${amount} from the EUR total`);
+      continue;
+    }
+    eur += amount / rate;
   }
   return Math.round(eur * 100) / 100;
 }
