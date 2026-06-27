@@ -11,8 +11,9 @@ import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { configPath, admobPath, type Config, type RunStatus } from "@/lib/store/paths";
+import { configPath, admobPath, type Config, type RunStatus, type SalesDay } from "@/lib/store/paths";
 import { admobConfigured, collectAdmob, type AdMobRow } from "@/lib/sources/admob";
+import { fetchEurRates, toEur, type EurRates } from "@/lib/fx";
 
 export type AdmobResult = { ok: boolean; rows?: number; error?: string };
 
@@ -34,8 +35,21 @@ function makeDeps(e: Env, key: AscKey, config: Config): OrchestratorDeps {
     collectSales: async (apps, day) => {
       const fetchTsv = ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER);
       for (let lag = 1; lag <= 5; lag++) {
-        const res = await collectSales(fetchTsv, apps, addDays(day, -lag));
-        if (Object.keys(res).length > 0) return res;
+        const reportDay = addDays(day, -lag);
+        const res = await collectSales(fetchTsv, apps, reportDay);
+        if (Object.keys(res).length > 0) {
+          // Convert each sale's mixed-currency proceeds to EUR with that report day's ECB rates so
+          // the revenue surfaces stop counting e.g. 18.49 BRL as 18.49 €. Best-effort: a failed FX
+          // fetch falls back to the static table in toEur; a row whose currency wasn't captured
+          // (empty proceedsByCcy) is left without proceedsEur so readers fall back to the raw lump.
+          const rates = await fetchEurRates(reportDay).catch(() => ({} as EurRates));
+          for (const sd of Object.values(res) as SalesDay[]) {
+            if (sd.proceedsByCcy && Object.keys(sd.proceedsByCcy).length > 0) {
+              sd.proceedsEur = toEur(sd.proceedsByCcy, rates);
+            }
+          }
+          return res;
+        }
       }
       return {};
     },

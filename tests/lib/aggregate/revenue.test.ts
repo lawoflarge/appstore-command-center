@@ -67,3 +67,23 @@ describe("buildIapBreakdown", () => {
     expect(r).toEqual({ totalProceeds: 0, byApp: [], byDay: [], appsWithRevenue: 0 });
   });
 });
+
+describe("EUR conversion (proceedsEur)", () => {
+  // A real NetGuard Pro sale in Brazil: the legacy raw lump is 18.49 (overstated, counted as €),
+  // the FX-converted figure is ~3.14 €. Both revenue surfaces must report the EUR value and only
+  // fall back to proceedsUsd when proceedsEur is absent (pre-backfill rows).
+  const brl: SalesDay = {
+    day: "2026-06-23", byCountry: {}, total: 0, redownloads: 0,
+    proceedsUsd: 18.49, proceedsByCcy: { BRL: 18.49 }, proceedsEur: 3.14,
+  };
+
+  it("prefers proceedsEur over the raw proceedsUsd in buildRevenue", () => {
+    expect(buildRevenue([], [brl]).iapProceeds).toBe(3.14);
+  });
+
+  it("prefers proceedsEur over the raw proceedsUsd in buildIapBreakdown", () => {
+    const bd = buildIapBreakdown([{ appId: "1", name: "NetGuard", sales: [brl] }]);
+    expect(bd.totalProceeds).toBe(3.14);
+    expect(bd.byApp[0].proceeds).toBe(3.14);
+  });
+});

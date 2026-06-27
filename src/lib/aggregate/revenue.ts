@@ -19,11 +19,15 @@ export interface RevenueSummary {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// EUR-converted proceeds (lib/fx) when present, else the legacy raw mixed-currency lump for rows
+// collected before the FX fix / backfill. Single accessor so every proceeds read is consistent.
+const proceedsOf = (s: SalesDay) => s.proceedsEur ?? s.proceedsUsd ?? 0;
+
 export function buildRevenue(admob: AdMobRow[], sales: SalesDay[]): RevenueSummary {
   const ad = new Map<string, number>();
   for (const r of admob) ad.set(r.day, (ad.get(r.day) ?? 0) + r.earnings);
   const iap = new Map<string, number>();
-  for (const s of sales) iap.set(s.day, (iap.get(s.day) ?? 0) + s.proceedsUsd);
+  for (const s of sales) iap.set(s.day, (iap.get(s.day) ?? 0) + proceedsOf(s));
 
   const days = [...new Set([...ad.keys(), ...iap.keys()])].sort((a, b) => a.localeCompare(b));
   const byDay: RevenuePoint[] = days.map((day) => {
@@ -62,9 +66,10 @@ export function buildIapBreakdown(
   for (const { appId, name, sales } of apps) {
     let appProceeds = 0;
     for (const s of sales) {
-      if (!s.proceedsUsd) continue;
-      appProceeds += s.proceedsUsd;
-      dayMap.set(s.day, (dayMap.get(s.day) ?? 0) + s.proceedsUsd);
+      const p = proceedsOf(s);
+      if (!p) continue;
+      appProceeds += p;
+      dayMap.set(s.day, (dayMap.get(s.day) ?? 0) + p);
     }
     if (appProceeds > 0) byApp.push({ appId, name, proceeds: round2(appProceeds) });
   }

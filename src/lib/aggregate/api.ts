@@ -10,7 +10,7 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
   // list and the chart consistent: an app whose newest report is older than the reference day shows
   // N/A for it (see pass 2) instead of contributing a stale value mislabeled with a newer date.
   // Apple publishes analytics 24-48h late, so the reference day is "latest available", not today.
-  type Loaded = { id: string; meta: AppMeta; analytics: AnalyticsDay[]; sales: SalesDay[]; ratings: RatingPoint[]; useAnalytics: boolean };
+  type Loaded = { id: string; meta: AppMeta; analytics: AnalyticsDay[]; sales: SalesDay[]; ratings: RatingPoint[]; useAnalytics: boolean; ownLatest: string };
   const loaded: Loaded[] = [];
   let latestDay = "";
   for (const id of appIds) {
@@ -32,16 +32,27 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
     // for free apps it's commonly empty and always lags ~24h.
     const useAnalytics = analytics.length > 0;
     // Robust max over the actual rows — don't assume the on-disk array is sorted ascending.
-    for (const r of useAnalytics ? analytics : sales) if (r.day > latestDay) latestDay = r.day;
-    loaded.push({ id, meta, analytics, sales, ratings, useAnalytics });
+    // Track BOTH the app's own latest day and the portfolio-wide max (the latter is just the
+    // headline "data through" date now, no longer the per-app reference — see pass 2).
+    let ownLatest = "";
+    for (const r of useAnalytics ? analytics : sales) {
+      if (r.day > ownLatest) ownLatest = r.day;
+      if (r.day > latestDay) latestDay = r.day;
+    }
+    loaded.push({ id, meta, analytics, sales, ratings, useAnalytics, ownLatest });
   }
   // Pass 2: per app, the value AT the shared latest day. `today` is null when the app has no row
   // for it yet (cron/Apple hasn't published it for that app) → the UI renders "N/A".
   const apps = [];
   let ratingWeighted = 0;
   let ratingCount = 0;
-  for (const { id, meta, analytics, sales, ratings, useAnalytics } of loaded) {
-    const t = useAnalytics ? analyticsTotals(analytics, latestDay) : totals(sales, latestDay);
+  for (const { id, meta, analytics, sales, ratings, useAnalytics, ownLatest } of loaded) {
+    // Each app reports the value at ITS OWN latest day — NOT the portfolio-wide max. Pinning every
+    // app to the global max made any app that lagged even one day show "N/A"; when a single fresher
+    // app (e.g. one with a brand-new rolling-window day) pulled the shared reference day ahead of
+    // the pack, the whole list went N/A. `today` is null only when the app has no data at all. The
+    // app's own date rides along in `latestDay` so the page can label a lagging value honestly.
+    const t = useAnalytics ? analyticsTotals(analytics, ownLatest) : totals(sales, ownLatest);
     const lastRating = ratings.at(-1) ?? null;
     if (lastRating && lastRating.count > 0) {
       ratingWeighted += lastRating.avg * lastRating.count;
@@ -51,6 +62,7 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
       appId: id,
       name: meta.name,
       ...t,
+      latestDay: ownLatest,
       rating: lastRating ? { avg: lastRating.avg, count: lastRating.count } : null,
       anomaly: insights.apps?.[id]?.anomaly ?? null,
     });

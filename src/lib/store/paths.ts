@@ -13,7 +13,12 @@ export const dashboardsPath = () => `data/dashboards.json`;
 export const runStatusPath = () => `data/run-status.json`;
 
 export interface DailyMetric { day: string; [k: string]: string | number; }
-export interface SalesDay { day: string; byCountry: Record<string, number>; total: number; redownloads: number; proceedsUsd: number; }
+// proceedsUsd is the LEGACY field: a raw sum of Apple's "Developer Proceeds" across mixed
+// currencies (EUR/GBP/BRL/…) — misnamed and not actually USD. proceedsByCcy keeps the proceeds
+// split by their reported "Currency of Proceeds"; proceedsEur is that map converted to EUR with
+// ECB rates (see lib/fx.ts). Readers prefer proceedsEur and fall back to proceedsUsd for rows
+// collected before the FX fix / backfill.
+export interface SalesDay { day: string; byCountry: Record<string, number>; total: number; redownloads: number; proceedsUsd: number; proceedsByCcy?: Record<string, number>; proceedsEur?: number; }
 export interface AnalyticsDay { day: string; impressions: number; pageViews: number; downloads: number; sessions: number; activeDevices: number; deletions: number; crashes: number; bySource: Record<string, number>; }
 export interface RatingPoint { day: string; byCountry: Record<string, { avg: number; count: number }>; avg: number; count: number; }
 export interface Review { id: string; rating: number; title: string; body: string; reviewer: string; territory: string; createdDate: string; responded: boolean; }

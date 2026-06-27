@@ -24,12 +24,21 @@ export async function collectSales(
 
   const acc: Record<string, SalesDay> = {};
   const ensure = (appId: string) =>
-    (acc[appId] ??= { day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd: 0 });
+    (acc[appId] ??= { day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd: 0, proceedsByCcy: {} });
+  // Apple reports "Developer Proceeds" in each sale's own "Currency of Proceeds" (EUR/GBP/BRL/…).
+  // Keep the raw lump in proceedsUsd (legacy) but ALSO bucket it by currency so lib/fx can convert
+  // to one EUR figure — summing the raw numbers across currencies overstated revenue (an 18.49 BRL
+  // sale was counted as 18.49 €). Skip empties so a free app's SalesDay keeps an empty {}.
+  const addCcy = (s: SalesDay, amount: number, ccy: string) => {
+    if (!amount || !ccy) return;
+    (s.proceedsByCcy ??= {})[ccy] = (s.proceedsByCcy[ccy] ?? 0) + amount;
+  };
 
   for (const r of rows) {
     const appId = r["Apple Identifier"];
     const units = parseInt(r["Units"] || "0", 10);
     const proceeds = parseFloat(r["Developer Proceeds"] || "0") || 0;
+    const ccy = (r["Currency of Proceeds"] || "").trim();
     if (want.has(appId)) {
       const ptype = (r["Product Type Identifier"] || "").trim();
       const s = ensure(appId);
@@ -40,10 +49,11 @@ export async function collectSales(
         s.redownloads += units;
       }
       s.proceedsUsd += proceeds * units;
+      addCcy(s, proceeds * units, ccy);
     } else if (proceeds) {
       // An IAP / subscription row — credit its proceeds to the parent app it belongs to.
       const parent = skuToApp.get((r["Parent Identifier"] || "").trim());
-      if (parent) ensure(parent).proceedsUsd += proceeds * units;
+      if (parent) { const s = ensure(parent); s.proceedsUsd += proceeds * units; addCcy(s, proceeds * units, ccy); }
     }
   }
   return acc;
