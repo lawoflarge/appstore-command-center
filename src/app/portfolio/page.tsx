@@ -8,6 +8,14 @@ import { todayUtc } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2026-06-23" → "23 Jun" (parsed from parts, no Date → no timezone shift).
+function fmtDay(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return y && m && d ? `${d} ${MONTHS[m - 1]}` : iso;
+}
+
 export default async function Portfolio() {
   const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const ids = await visibleAppIds(store);
@@ -35,7 +43,13 @@ export default async function Portfolio() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="num text-right text-sm"><span className="font-semibold">{a.today ?? "N/A"}</span> latest · {a.total.toLocaleString()} total</span>
+                <span className="num text-right text-sm">
+                  <span className="font-semibold">{a.today ?? "N/A"}</span>
+                  {a.today !== null && a.latestDay && a.latestDay !== g.latestDay ? (
+                    <span className="ml-1 text-xs text-[var(--ink-2)]">· {fmtDay(a.latestDay)}</span>
+                  ) : null}{" "}
+                  latest · {a.total.toLocaleString()} total
+                </span>
                 <span aria-hidden className="text-[var(--ink-2)]">›</span>
               </div>
             </div>

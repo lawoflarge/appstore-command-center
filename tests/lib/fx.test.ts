@@ -21,6 +21,14 @@ test("toEur falls back to the static table for a currency missing from the live 
   expect(toEur({ COP: 4400 }, {})).toBeCloseTo(1.0, 1);
 });
 
+test("toEur skips a currency missing from BOTH the live feed and the fallback (never inflates)", () => {
+  // An unknown code must not be added at face value — that is the over-count bug this module prevents.
+  // It is excluded (a slight under-count is acceptable; silent inflation is not).
+  expect(toEur({ ZZZ: 100 }, {})).toBe(0);
+  // …and a missing rate must not poison a real currency in the same map
+  expect(toEur({ EUR: 5, ZZZ: 100 }, {})).toBe(5);
+});
+
 test("toEur is empty-safe", () => {
   expect(toEur({}, RATES)).toBe(0);
   expect(toEur(undefined, RATES)).toBe(0);

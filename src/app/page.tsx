@@ -48,10 +48,11 @@ export default async function Glance() {
   const topActions = buildActionItems(insights).slice(0, 3);
   const dashboardApps = ids.map((id) => ({ id, name: raw.apps[id]?.name ?? id }));
   const total = g.apps.reduce((s, a) => s + a.total, 0);
-  // Latest-day total sums only apps that HAVE data for the shared latest day; an app still lagging
-  // contributes null → 0 here and renders "N/A" in its row (never a stale value under a newer date).
+  // Latest-day total sums each app's OWN latest-day value (a.today); an app that lags a day still
+  // contributes its real number here, and its row labels that value with the app's own date. a.today
+  // is null ONLY when an app has no data at all — those contribute 0 here and render "N/A" in the row.
   const today = g.apps.reduce((s, a) => s + (a.today ?? 0), 0);
-  const naCount = g.apps.filter((a) => a.today === null).length;
+  const naCount = g.apps.filter((a) => a.today === null).length; // apps with zero data
   const rating = g.blendedRating;
   const latestDay = g.latestDay;
   const lastRunCopy = status
