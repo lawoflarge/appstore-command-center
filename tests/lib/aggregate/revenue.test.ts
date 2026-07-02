@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
 import type { AdMobRow } from "@/lib/sources/admob";
-import type { SalesDay } from "@/lib/store/paths";
+import type { SalesDay, KickbacksDay } from "@/lib/store/paths";
 
 const ad = (day: string, earnings: number): AdMobRow => ({
   day, appId: "a", app: "App", adUnit: "u", earnings,
@@ -9,6 +9,9 @@ const ad = (day: string, earnings: number): AdMobRow => ({
 });
 const sale = (day: string, proceedsUsd: number): SalesDay => ({
   day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd,
+});
+const kick = (day: string, earningsEur: number): KickbacksDay => ({
+  day, earningsUsd: 0, earningsEur,
 });
 
 describe("buildRevenue", () => {
@@ -21,10 +24,34 @@ describe("buildRevenue", () => {
     expect(r.iapProceeds).toBe(4.0);
     expect(r.total).toBe(7.5);
     expect(r.byDay).toEqual([
-      { day: "2026-05-20", ad: 1.5, iap: 0, total: 1.5 },
-      { day: "2026-05-21", ad: 2.0, iap: 3.0, total: 5.0 },
-      { day: "2026-05-22", ad: 0, iap: 1.0, total: 1.0 },
+      { day: "2026-05-20", ad: 1.5, iap: 0, kb: 0, total: 1.5 },
+      { day: "2026-05-21", ad: 2.0, iap: 3.0, kb: 0, total: 5.0 },
+      { day: "2026-05-22", ad: 0, iap: 1.0, kb: 0, total: 1.0 },
     ]);
+  });
+
+  it("merges Kickbacks earnings as a third stream (EUR) into total and shares", () => {
+    const r = buildRevenue(
+      [ad("2026-07-01", 1.0)],
+      [sale("2026-07-01", 1.0)],
+      [kick("2026-07-01", 0.12), kick("2026-07-02", 0.08)],
+    );
+    expect(r.adEarnings).toBe(1.0);
+    expect(r.iapProceeds).toBe(1.0);
+    expect(r.kbEarnings).toBe(0.2);
+    expect(r.total).toBe(2.2);
+    expect(r.kbShare).toBeCloseTo(0.2 / 2.2, 5);
+    expect(r.byDay).toEqual([
+      { day: "2026-07-01", ad: 1.0, iap: 1.0, kb: 0.12, total: 2.12 },
+      { day: "2026-07-02", ad: 0, iap: 0, kb: 0.08, total: 0.08 },
+    ]);
+  });
+
+  it("defaults kickbacks to empty (backward-compatible 2-arg call) and stays zero-safe", () => {
+    const r = buildRevenue([ad("2026-07-01", 2.0)], []);
+    expect(r.kbEarnings).toBe(0);
+    expect(r.kbShare).toBe(0);
+    expect(buildRevenue([], []).kbShare).toBe(0);
   });
 
   it("computes ad/iap share and is zero-safe", () => {

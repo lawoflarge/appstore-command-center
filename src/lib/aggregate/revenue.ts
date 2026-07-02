@@ -1,19 +1,21 @@
 import type { AdMobRow } from "@/lib/sources/admob";
-import type { SalesDay } from "@/lib/store/paths";
+import type { SalesDay, KickbacksDay } from "@/lib/store/paths";
 
-// Unified revenue = AdMob ad earnings + App Store developer proceeds (IAP / subscriptions).
-// For the free apps tracked here, every ASC proceed is an in-app purchase or subscription,
-// so SalesDay.proceedsUsd stands in for "in-app & subscription revenue". Amounts are summed
-// at their reported value (no FX normalization) — honest caveat surfaced in the UI.
+// Unified revenue = AdMob ad earnings + App Store developer proceeds (IAP / subscriptions) +
+// Kickbacks.ai earnings (AI wait-time sponsored status-line ads). AdMob earnings are already in
+// EUR; App Store proceeds prefer the ECB-converted proceedsEur; Kickbacks earnings are stored in
+// EUR (earningsEur) by the collector. Estimated / pre-finalization — honest caveat in the UI.
 
-export interface RevenuePoint { day: string; ad: number; iap: number; total: number }
+export interface RevenuePoint { day: string; ad: number; iap: number; kb: number; total: number }
 
 export interface RevenueSummary {
   adEarnings: number;
   iapProceeds: number;
+  kbEarnings: number;
   total: number;
   adShare: number; // 0..1 share of total from ads
   iapShare: number;
+  kbShare: number;
   byDay: RevenuePoint[];
 }
 
@@ -23,26 +25,35 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // collected before the FX fix / backfill. Single accessor so every proceeds read is consistent.
 const proceedsOf = (s: SalesDay) => s.proceedsEur ?? s.proceedsUsd ?? 0;
 
-export function buildRevenue(admob: AdMobRow[], sales: SalesDay[]): RevenueSummary {
+export function buildRevenue(
+  admob: AdMobRow[],
+  sales: SalesDay[],
+  kickbacks: KickbacksDay[] = [],
+): RevenueSummary {
   const ad = new Map<string, number>();
   for (const r of admob) ad.set(r.day, (ad.get(r.day) ?? 0) + r.earnings);
   const iap = new Map<string, number>();
   for (const s of sales) iap.set(s.day, (iap.get(s.day) ?? 0) + proceedsOf(s));
+  const kb = new Map<string, number>();
+  for (const k of kickbacks) kb.set(k.day, (kb.get(k.day) ?? 0) + (k.earningsEur ?? 0));
 
-  const days = [...new Set([...ad.keys(), ...iap.keys()])].sort((a, b) => a.localeCompare(b));
+  const days = [...new Set([...ad.keys(), ...iap.keys(), ...kb.keys()])].sort((a, b) => a.localeCompare(b));
   const byDay: RevenuePoint[] = days.map((day) => {
     const a = round2(ad.get(day) ?? 0);
     const i = round2(iap.get(day) ?? 0);
-    return { day, ad: a, iap: i, total: round2(a + i) };
+    const k = round2(kb.get(day) ?? 0);
+    return { day, ad: a, iap: i, kb: k, total: round2(a + i + k) };
   });
 
   const adEarnings = round2(byDay.reduce((s, p) => s + p.ad, 0));
   const iapProceeds = round2(byDay.reduce((s, p) => s + p.iap, 0));
-  const total = round2(adEarnings + iapProceeds);
+  const kbEarnings = round2(byDay.reduce((s, p) => s + p.kb, 0));
+  const total = round2(adEarnings + iapProceeds + kbEarnings);
   return {
-    adEarnings, iapProceeds, total,
+    adEarnings, iapProceeds, kbEarnings, total,
     adShare: total > 0 ? adEarnings / total : 0,
     iapShare: total > 0 ? iapProceeds / total : 0,
+    kbShare: total > 0 ? kbEarnings / total : 0,
     byDay,
   };
 }
