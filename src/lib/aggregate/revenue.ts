@@ -47,7 +47,13 @@ export function buildRevenue(
 
   const adEarnings = round2(byDay.reduce((s, p) => s + p.ad, 0));
   const iapProceeds = round2(byDay.reduce((s, p) => s + p.iap, 0));
-  const kbEarnings = round2(byDay.reduce((s, p) => s + p.kb, 0));
+  // Kickbacks has no per-day history — the API only reports a running lifetime + today — so unlike
+  // AdMob/App Store (which carry real daily history) the by-day sum understates true earnings. Use
+  // the reported lifetimeEur (max across rows) so "Total revenue" reflects real Kickbacks earnings;
+  // fall back to the by-day sum for rows collected before lifetimeEur was stored.
+  const kbBySum = round2([...kb.values()].reduce((s, v) => s + v, 0));
+  const kbLifetime = round2(kickbacks.reduce((m, k) => Math.max(m, k.lifetimeEur ?? 0), 0));
+  const kbEarnings = kbLifetime > 0 ? kbLifetime : kbBySum;
   const total = round2(adEarnings + iapProceeds + kbEarnings);
   return {
     adEarnings, iapProceeds, kbEarnings, total,

@@ -47,6 +47,17 @@ describe("buildRevenue", () => {
     ]);
   });
 
+  it("uses the reported Kickbacks lifetimeEur for the total, not the by-day sum (no per-day history)", () => {
+    const kb: KickbacksDay[] = [
+      { day: "2026-07-01", earningsUsd: 0, earningsEur: 0.10, lifetimeEur: 12.30 },
+      { day: "2026-07-02", earningsUsd: 0, earningsEur: 0.04, lifetimeEur: 12.34 },
+    ];
+    const r = buildRevenue([ad("2026-07-01", 1.0)], [], kb);
+    expect(r.kbEarnings).toBe(12.34);   // reported lifetime (max), not the 0.14 by-day sum
+    expect(r.total).toBe(13.34);        // 1.0 ad + 12.34 kb
+    expect(r.byDay.find((p) => p.day === "2026-07-02")!.kb).toBe(0.04); // by-day stays daily
+  });
+
   it("defaults kickbacks to empty (backward-compatible 2-arg call) and stays zero-safe", () => {
     const r = buildRevenue([ad("2026-07-01", 2.0)], []);
     expect(r.kbEarnings).toBe(0);

@@ -230,16 +230,16 @@ export default async function Revenue() {
       ) : (
         <>
           <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="Lifetime (reported)" value={eur(kbLifetimeReported)} />
-            <Stat label="Tracked here" value={eur(rev.kbEarnings)} />
+            <Stat label="Kickbacks lifetime" value={eur(kbLifetimeReported)} />
             <Stat label={latestKb ? `Latest day · ${fmtDay(latestKb.day)}` : "Latest day"} value={eur(latestKb?.earningsEur ?? 0)} />
             <Stat label="This month" value={eur(kbThisMonth)} />
+            <Stat label="Share of total" value={rev.total > 0 ? pct(rev.kbShare) : "—"} />
           </div>
           <Card className="text-xs text-[var(--ink-2)]">
-            &quot;Lifetime (reported)&quot; is the cumulative total Kickbacks reports for the account.
-            &quot;Tracked here&quot; sums the daily rows collected since this dashboard started syncing
-            Kickbacks, so it climbs toward the lifetime figure over time. The unified total above uses
-            the tracked (by-day) value, consistent with AdMob and App Store.
+            Kickbacks reports a running <strong>lifetime</strong> total (plus today) — it has no
+            per-day history like AdMob or the App Store — so the unified &quot;Total revenue&quot; above
+            counts the full reported lifetime (€ via ECB daily rates). The daily / this-month figures
+            reflect activity since this dashboard started syncing Kickbacks.
           </Card>
         </>
       )}
