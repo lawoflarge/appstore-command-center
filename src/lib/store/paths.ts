@@ -6,6 +6,7 @@ export const ratingsPath = (appId: string, day: string) => `data/${appId}/rating
 export const keywordsPath = (appId: string, day: string) => `data/${appId}/keywords/${month(day)}.json`;
 export const reviewsPath = (appId: string) => `data/${appId}/reviews.json`;
 export const admobPath = (day: string) => `data/admob/${month(day)}.json`;
+export const kickbacksPath = (day: string) => `data/kickbacks/${month(day)}.json`;
 export const appMetaPath = (appId: string) => `data/${appId}/meta.json`;
 export const configPath = () => `data/config.json`;
 export const insightsPath = () => `data/insights.json`;
@@ -19,6 +20,10 @@ export interface DailyMetric { day: string; [k: string]: string | number; }
 // ECB rates (see lib/fx.ts). Readers prefer proceedsEur and fall back to proceedsUsd for rows
 // collected before the FX fix / backfill.
 export interface SalesDay { day: string; byCountry: Record<string, number>; total: number; redownloads: number; proceedsUsd: number; proceedsByCcy?: Record<string, number>; proceedsEur?: number; }
+// Kickbacks.ai earnings (AI wait-time sponsored status-line ads). Account-wide like AdMob, one
+// row per day. earningsUsd/lifetimeUsd come from the Kickbacks API; earningsEur/lifetimeEur are
+// the ECB-converted (lib/fx) values written by the data repo's kickbacks-sync collector.
+export interface KickbacksDay { day: string; earningsUsd: number; earningsEur: number; lifetimeUsd?: number; lifetimeEur?: number; rateUsd?: number; updatedMs?: number; }
 export interface AnalyticsDay { day: string; impressions: number; pageViews: number; downloads: number; sessions: number; activeDevices: number; deletions: number; crashes: number; bySource: Record<string, number>; }
 export interface RatingPoint { day: string; byCountry: Record<string, { avg: number; count: number }>; avg: number; count: number; }
 export interface Review { id: string; rating: number; title: string; body: string; reviewer: string; territory: string; createdDate: string; responded: boolean; }

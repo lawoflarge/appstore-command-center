@@ -2,7 +2,7 @@ import { Nav } from "@/components/glass/Nav";
 import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
-import { admobPath, salesPath, appMetaPath, type SalesDay, type AppMeta } from "@/lib/store/paths";
+import { admobPath, kickbacksPath, salesPath, appMetaPath, type SalesDay, type AppMeta, type KickbacksDay } from "@/lib/store/paths";
 import type { AdMobRow } from "@/lib/sources/admob";
 import { todayUtc, rowsInMonth, addDays } from "@/lib/dates";
 import { visibleAppIds } from "@/lib/aggregate/api";
@@ -60,6 +60,12 @@ export default async function Revenue() {
   );
   const all = arrays.flat();
 
+  // Kickbacks.ai earnings (account-wide, one row per day, already EUR-converted by the collector).
+  const kbArrays = await Promise.all(
+    months.map((m) => store.readJson<KickbacksDay[]>(kickbacksPath(`${m}-01`), [])),
+  );
+  const kbAll = kbArrays.flat().sort((a, b) => a.day.localeCompare(b.day));
+
   // App Store proceeds (IAP / subscriptions) per visible app — month-filtered so Apple's rolling
   // analytics window can't spill a prior month's day into the current file and double-count. Feeds
   // both the unified revenue view (merged with AdMob) and the per-app/per-day IAP breakdown.
@@ -70,8 +76,13 @@ export default async function Revenue() {
     const sales = perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
     return { appId: id, name: meta?.name ?? id, sales };
   }));
-  const rev = buildRevenue(all, appSales.flatMap((a) => a.sales));
+  const rev = buildRevenue(all, appSales.flatMap((a) => a.sales), kbAll);
   const iap = buildIapBreakdown(appSales);
+
+  // Kickbacks-derived figures for its own section.
+  const latestKb = kbAll.at(-1) ?? null;
+  const kbThisMonth = round2(kbAll.filter((k) => k.day.slice(0, 7) === curMonth).reduce((s, k) => s + (k.earningsEur ?? 0), 0));
+  const kbLifetimeReported = latestKb?.lifetimeEur ?? rev.kbEarnings;
 
   const dayMap = new Map<string, Acc>();
   const monMap = new Map<string, Acc>();
@@ -119,16 +130,18 @@ export default async function Revenue() {
       <Nav />
       <h1 className="mb-1 text-2xl font-bold tracking-tight">Revenue</h1>
       <p className="mb-5 text-xs text-[var(--ink-2)]">
-        Total revenue across every app — AdMob ads plus App Store in-app purchases &amp; subscriptions.
-        Estimated and pre-finalization; amounts summed at reported value (no FX conversion).
+        Total revenue across every app — AdMob ads, App Store in-app purchases &amp; subscriptions,
+        and Kickbacks.ai AI-wait-time ads. Estimated and pre-finalization; App Store proceeds and
+        Kickbacks are ECB-converted to EUR, AdMob is already in EUR.
       </p>
 
       {/* Unified revenue: ads + in-app/subscriptions */}
       <section className="mb-6">
-        <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <Stat label="Total revenue" value={eur(rev.total)} />
           <Stat label="Ad revenue" value={eur(rev.adEarnings)} />
           <Stat label="In-app & subs" value={eur(rev.iapProceeds)} />
+          <Stat label="Kickbacks" value={eur(rev.kbEarnings)} />
           <Stat label="Ad share" value={rev.total > 0 ? pct(rev.adShare) : "—"} />
         </div>
         <Card className="text-xs text-[var(--ink-2)]">
@@ -200,6 +213,35 @@ export default async function Revenue() {
         </Card>
       ) : (
         <RevenueCharts daily={daily} monthly={monthly} byApp={byApp} byAdUnit={byAdUnit} currency={CURRENCY} />
+      )}
+
+      <h2 className="mb-2 mt-8 text-lg font-semibold">Kickbacks (AI wait-time ads)</h2>
+      <p className="mb-4 text-xs text-[var(--ink-2)]">
+        Sponsored status-line ads shown in Claude Code / Codex while the agent works — Kickbacks.ai
+        pays out 50% of ad revenue. Earnings from the Kickbacks API, converted USD→EUR with ECB daily
+        rates. Estimated and pre-finalization.
+      </p>
+      {kbAll.length === 0 ? (
+        <Card className="text-sm">
+          No Kickbacks data yet. The <code>kickbacks-sync</code> GitHub Action in the data repo pulls
+          earnings into <code>data/kickbacks/&lt;YYYY-MM&gt;.json</code> once the{" "}
+          <code>KICKBACKS_GH_PAT</code> secret is set.
+        </Card>
+      ) : (
+        <>
+          <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Stat label="Lifetime (reported)" value={eur(kbLifetimeReported)} />
+            <Stat label="Tracked here" value={eur(rev.kbEarnings)} />
+            <Stat label={latestKb ? `Latest day · ${fmtDay(latestKb.day)}` : "Latest day"} value={eur(latestKb?.earningsEur ?? 0)} />
+            <Stat label="This month" value={eur(kbThisMonth)} />
+          </div>
+          <Card className="text-xs text-[var(--ink-2)]">
+            &quot;Lifetime (reported)&quot; is the cumulative total Kickbacks reports for the account.
+            &quot;Tracked here&quot; sums the daily rows collected since this dashboard started syncing
+            Kickbacks, so it climbs toward the lifetime figure over time. The unified total above uses
+            the tracked (by-day) value, consistent with AdMob and App Store.
+          </Card>
+        </>
       )}
     </main>
   );
