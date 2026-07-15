@@ -169,3 +169,34 @@ test("finish pass writes insights from store + merges status without re-collecti
   expect(store.fs.get("data/insights.json").generatedAt).toBe("2026-05-18");
   expect(status.perApp["1"]?.sales?.ok).toBe(true); // earlier batch's mark survived the merge
 });
+
+// 2026-07-15 outage: a GitHub 502 "Unicorn" HTML error page (~55 kB, inline base64 image)
+// was recorded VERBATIM as intelligence.error for all 22 apps → run-status.json grew past
+// GitHub's 1 MB Contents-API limit → every read returned empty content → every page 500'd
+// and run-status froze. Errors recorded into run-status must be bounded.
+test("recorded errors are truncated so run-status can never balloon past the 1MB read limit", async () => {
+  const store = memStore();
+  const huge = "GH GET 502 data/x.json: " + "<html>".repeat(10_000); // ~60 kB, like the real 502 page
+  const status = await runDailyCollection({
+    day: "2026-05-18", store: store as any,
+    deps: okDeps({ runIntelligence: async () => { throw new Error(huge); } }),
+  });
+  const err = status.perApp["1"].intelligence.error!;
+  expect(err.length).toBeLessThan(700);
+  expect(err).toContain("GH GET 502");
+});
+
+// Intelligence success previously recorded NO mark, so a stale failed mark (with its giant
+// error string) survived every later successful run via the status merge — forever.
+test("a successful intelligence pass marks intelligence ok and clears a stale failure", async () => {
+  const store = memStore();
+  store.fs.set("data/run-status.json", {
+    lastRun: "2026-05-17T00:00:00Z", lastSuccess: "",
+    perApp: { "1": { intelligence: { ok: false, at: "2026-05-17T00:00:00Z", error: "old giant error" } } },
+  });
+  const status = await runDailyCollection({ day: "2026-05-18", store: store as any, deps: okDeps() });
+  expect(status.perApp["1"].intelligence.ok).toBe(true);
+  expect(status.perApp["1"].intelligence.error).toBeUndefined();
+  const persisted = store.fs.get("data/run-status.json");
+  expect(persisted.perApp["1"].intelligence.ok).toBe(true);
+});

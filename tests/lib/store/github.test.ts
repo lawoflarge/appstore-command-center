@@ -52,3 +52,48 @@ test("ghPutJson throws on failure", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("bad", { status: 422 })));
   await expect(ghPutJson(cfg, "data/x.json", { a: 1 }, null, "m")).rejects.toThrow("GH PUT 422");
 });
+
+test("ghGetJson re-fetches raw when the Contents API omits content (>1MB file)", async () => {
+  const value = { big: true };
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const accept = (init?.headers as Record<string, string>)?.Accept ?? "";
+    if (accept === "application/vnd.github.raw") {
+      return new Response(JSON.stringify(value), { status: 200 });
+    }
+    return new Response(
+      JSON.stringify({ content: "", encoding: "none", size: 1_231_183, sha: "bigsha" }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const r = await ghGetJson<{ big: boolean }>(cfg, "data/run-status.json");
+  expect(r).toEqual({ value: { big: true }, sha: "bigsha" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect((fetchMock.mock.calls[1][1] as any).headers.Accept).toBe("application/vnd.github.raw");
+});
+
+test("ghGetJson still decodes an empty-but-tiny file the old way (no raw re-fetch on size 0)", async () => {
+  const content = Buffer.from(JSON.stringify([])).toString("base64");
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ content, size: 2, sha: "s1" }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  expect(await ghGetJson(cfg, "data/x.json")).toEqual({ value: [], sha: "s1" });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("ghGetJson truncates huge error bodies (GitHub 502 Unicorn HTML page)", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("x".repeat(60_000), { status: 502 })));
+  const err = await ghGetJson(cfg, "data/x.json").catch((e: Error) => e);
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toContain("GH GET 502");
+  expect((err as Error).message.length).toBeLessThan(700);
+  expect((err as Error).message).toContain("truncated");
+});
+
+test("ghPutJson truncates huge error bodies", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("y".repeat(60_000), { status: 502 })));
+  const err = await ghPutJson(cfg, "data/x.json", { a: 1 }, null, "m").catch((e: Error) => e);
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toContain("GH PUT 502");
+  expect((err as Error).message.length).toBeLessThan(700);
+});
