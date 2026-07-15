@@ -119,14 +119,21 @@ export async function runDailyCollection(input: {
     perApp: {},
   };
   let hadFailure = false;
+  // Cap recorded errors: run-status.json is read through the GitHub Contents API, which
+  // returns empty content for files over 1 MB. One un-truncated GitHub 502 HTML page
+  // (~55 kB) recorded per app pushed the file past that limit and 500'd every page.
+  const MAX_MARK_ERROR = 500;
   const mark = (
     id: string, k: string, ok: boolean,
     opts: { error?: string; rows?: number } = {},
   ) => {
     if (!ok) hadFailure = true;
+    const error = opts.error && opts.error.length > MAX_MARK_ERROR
+      ? `${opts.error.slice(0, MAX_MARK_ERROR)}… [truncated]`
+      : opts.error;
     (status.perApp[id] ??= {})[k] = {
       ok, at: new Date().toISOString(),
-      ...(opts.error ? { error: opts.error } : {}),
+      ...(error ? { error } : {}),
       ...(opts.rows !== undefined ? { rows: opts.rows } : {}),
     };
   };
@@ -140,6 +147,9 @@ export async function runDailyCollection(input: {
       const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
       const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
       await store.writeJson(appMetaPath(a.appId), merged, `chore(data): meta ${a.appId}`);
+      // Success mark, or a stale meta failure (e.g. a transient 409) survives the status
+      // merge forever and keeps lastSuccess permanently empty.
+      mark(a.appId, "meta", true);
     } catch (e: any) { mark(a.appId, "meta", false, { error: String(e?.message ?? e) }); }
   }));
 
@@ -226,6 +236,10 @@ export async function runDailyCollection(input: {
       const intelInputs = await buildIntelInputsFromStore(store, allApps, day);
       const insights = await deps.runIntelligence({ day, apps: intelInputs });
       await store.writeJson(insightsPath(), insights, `data: insights ${day}`);
+      // Mark success explicitly — without it, a stale failed mark (and its error string)
+      // survives the status merge below forever, since the merge only overwrites keys
+      // this run marked.
+      allApps.forEach((a) => mark(a.appId, "intelligence", true));
     } catch (e: any) {
       allApps.forEach((a) => mark(a.appId, "intelligence", false, { error: String(e?.message ?? e) }));
     }
