@@ -72,13 +72,12 @@ test("ghGetJson re-fetches raw when the Contents API omits content (>1MB file)",
   expect((fetchMock.mock.calls[1][1] as any).headers.Accept).toBe("application/vnd.github.raw");
 });
 
-test("ghGetJson still decodes an empty-but-tiny file the old way (no raw re-fetch on size 0)", async () => {
-  const content = Buffer.from(JSON.stringify([])).toString("base64");
+test("ghGetJson does not raw re-fetch a genuinely empty file (size 0) — parse throws as before", async () => {
   const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({ content, size: 2, sha: "s1" }), { status: 200 }));
+    new Response(JSON.stringify({ content: "", size: 0, sha: "s1" }), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
-  expect(await ghGetJson(cfg, "data/x.json")).toEqual({ value: [], sha: "s1" });
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await expect(ghGetJson(cfg, "data/x.json")).rejects.toThrow();
+  expect(fetchMock).toHaveBeenCalledTimes(1); // no second (raw) request
 });
 
 test("ghGetJson truncates huge error bodies (GitHub 502 Unicorn HTML page)", async () => {
