@@ -200,3 +200,19 @@ test("a successful intelligence pass marks intelligence ok and clears a stale fa
   const persisted = store.fs.get("data/run-status.json");
   expect(persisted.perApp["1"].intelligence.ok).toBe(true);
 });
+
+// Meta had the same stale-failure bug as intelligence: success recorded no mark, so a
+// transient 409 failure mark from weeks ago survived every later merge and kept
+// lastSuccess permanently empty.
+test("a successful meta write marks meta ok and clears a stale failure", async () => {
+  const store = memStore();
+  store.fs.set("data/run-status.json", {
+    lastRun: "2026-05-17T00:00:00Z", lastSuccess: "",
+    perApp: { "1": { meta: { ok: false, at: "2026-05-17T00:00:00Z", error: "GH PUT 409 stale" } } },
+  });
+  const status = await runDailyCollection({ day: "2026-05-18", store: store as any, deps: okDeps() });
+  expect(status.perApp["1"].meta.ok).toBe(true);
+  const persisted = store.fs.get("data/run-status.json");
+  expect(persisted.perApp["1"].meta.ok).toBe(true);
+  expect(persisted.lastSuccess).not.toBe("");
+});

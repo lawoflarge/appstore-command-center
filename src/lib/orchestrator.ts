@@ -147,6 +147,9 @@ export async function runDailyCollection(input: {
       const prev = await store.readJson<AppMeta | null>(appMetaPath(a.appId), null);
       const merged: AppMeta = prev ? { ...a, firstSeen: prev.firstSeen, hidden: prev.hidden, archived: prev.archived, releases: prev.releases } : a;
       await store.writeJson(appMetaPath(a.appId), merged, `chore(data): meta ${a.appId}`);
+      // Success mark, or a stale meta failure (e.g. a transient 409) survives the status
+      // merge forever and keeps lastSuccess permanently empty.
+      mark(a.appId, "meta", true);
     } catch (e: any) { mark(a.appId, "meta", false, { error: String(e?.message ?? e) }); }
   }));
 
