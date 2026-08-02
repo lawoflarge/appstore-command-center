@@ -1,0 +1,111 @@
+name: Kickbacks sync
+
+# Reads Kickbacks earnings into the git-as-DB and rotates the refresh token.
+#
+# WHY THIS WORKFLOW LIVES IN THE PUBLIC REPO: it used to run in the private data
+# repo, but Actions minutes on private repos are billed — on 2026-07-31 a GitHub
+# billing block stopped every private-repo job account-wide ("The job was not
+# started because recent account payments have failed..."), which silently froze
+# the earnings sync. Public repos get unlimited free Actions minutes, so running
+# it here makes the sync independent of billing.
+#
+# Only this workflow file is public. The sync SCRIPT and the earnings DATA both
+# stay in the private data repo: the job checks that repo out into ./data-repo
+# and runs the script from there, so the script's own repo-root resolution still
+# points at the right data/ directory and nothing is ever written into this repo.
+#
+# The rotating token lives in the KICKBACKS_REFRESH_TOKEN *secret* (never git).
+# The concurrency group serializes runs so the single-use token is spent by
+# exactly one job at a time. Each run: refresh (rotate) -> earnings -> upsert
+# data/kickbacks/<YYYY-MM>.json (committed to the DATA repo) + push the rotated
+# token back into THIS repo's secret via KICKBACKS_GH_PAT.
+#
+# KICKBACKS_GH_PAT must be a fine-grained PAT covering BOTH repos:
+#   - appstore-command-center-data : Contents  read/write  (checkout + commit)
+#   - appstore-command-center      : Secrets   read/write  (persist rotated token)
+#
+# ACTIVATION GATE: without KICKBACKS_GH_PAT the job does nothing — refreshing
+# would rotate (consume) the token with no way to persist the new one, breaking
+# the next run. So we skip entirely until the PAT secret is set.
+
+on:
+  schedule:
+    - cron: "30 */6 * * *" # every 6h, offset from the app-store sync
+  workflow_dispatch: {}
+
+concurrency:
+  group: kickbacks-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Activation gate (require KICKBACKS_GH_PAT)
+        id: gate
+        env:
+          PAT: ${{ secrets.KICKBACKS_GH_PAT }}
+        run: |
+          if [ -n "$PAT" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::KICKBACKS_GH_PAT not set — skipping to preserve the refresh token. Create a fine-grained PAT (data repo: Contents r/w, this repo: Secrets r/w) and set it as KICKBACKS_GH_PAT to activate."
+          fi
+
+      # Both the sync script and the earnings data live in the PRIVATE repo —
+      # this public repo only supplies the free Actions minutes.
+      - name: Checkout data repo (private — script + data)
+        if: steps.gate.outputs.ready == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: lawoflarge/appstore-command-center-data
+          token: ${{ secrets.KICKBACKS_GH_PAT }}
+          path: data-repo
+
+      - if: steps.gate.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Sync earnings (writes JSON + rotated token to a temp file)
+        if: steps.gate.outputs.ready == 'true'
+        working-directory: data-repo
+        env:
+          KICKBACKS_REFRESH_TOKEN: ${{ secrets.KICKBACKS_REFRESH_TOKEN }}
+          KB_ROTATED_OUT: ${{ runner.temp }}/kb_rt
+        run: node scripts/kickbacks-sync.mjs
+
+      - name: Persist rotated token back into the secret
+        # always(): a refresh rotates (consumes) the token BEFORE earnings runs, so the new token
+        # must be persisted even if a later step failed — otherwise the secret keeps a dead token.
+        if: ${{ always() && steps.gate.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.KICKBACKS_GH_PAT }}
+        run: |
+          if [ -s "${{ runner.temp }}/kb_rt" ]; then
+            gh secret set KICKBACKS_REFRESH_TOKEN \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "$(cat "${{ runner.temp }}/kb_rt")"
+            rm -f "${{ runner.temp }}/kb_rt"
+            echo "rotated token persisted to secret"
+          else
+            echo "no rotated token emitted (nothing to persist)"
+          fi
+
+      - name: Commit earnings JSON (to the data repo)
+        if: ${{ always() && steps.gate.outputs.ready == 'true' }}
+        working-directory: data-repo
+        run: |
+          git config user.name "kickbacks-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/kickbacks
+          if git diff --staged --quiet; then
+            echo "no changes"
+          else
+            git commit -m "chore(kickbacks): sync earnings [skip ci]"
+            git push
+          fi
