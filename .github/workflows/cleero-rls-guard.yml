@@ -1,0 +1,81 @@
+name: Cleero RLS guard
+
+# Standing security alarm for the Cleero prod database: fail if ANY base table
+# in the public schema has Row Level Security disabled. Cleero ships the public
+# Supabase anon key to the browser, so deny-by-default RLS is the entire defence
+# for the PostgREST anon surface. That RLS lives in a hand-applied migration
+# (cleero-predict: prisma/manual-migrations/2026-05-06-enable-rls-deny-by-default.sql)
+# which the repo cannot verify by itself — this job is the guard that catches a
+# new table shipping without RLS.
+#
+# WHY IT LIVES IN THIS PUBLIC REPO, not in lawoflarge/cleero-predict where the
+# code is: GitHub bills Actions minutes for PRIVATE repos only. The account's
+# free quota was exhausted on 2026-08-01, which blocks every private-repo job
+# account-wide until the monthly reset — the job never starts and the reason is
+# invisible in the logs (only the check-run annotation carries it). Public repos
+# have unlimited minutes, so the guard runs here and stays independent of
+# billing. The original workflow in cleero-predict is disabled.
+#
+# WHY THE DB CREDENTIAL IS SAFE TO KEEP IN A PUBLIC REPO:
+# CLEERO_RLS_DATABASE_URL is NOT the app's postgres user. It is a dedicated role
+# `cleero_rls_guard` with LOGIN and nothing else — no table privileges, no
+# SUPERUSER, no BYPASSRLS, no CREATEROLE, connection limit 3. It can read
+# pg_catalog (world-readable) and that is all: SELECT on any public table or on
+# auth.users fails with 42501. Verified on creation. Rotate with
+#   ALTER ROLE cleero_rls_guard PASSWORD '<new>';
+# then update the secret. Revoke entirely with DROP ROLE cleero_rls_guard;
+#
+# NOTE: GitHub disables scheduled workflows in a public repo after 60 days
+# without any commit to the repo. If runs stop appearing, check for that banner
+# before debugging the SQL.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily 06:17 UTC, same slot the private workflow used
+  workflow_dispatch: {}
+
+jobs:
+  rls-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert RLS enabled on every public table
+        env:
+          PGURL: ${{ secrets.CLEERO_RLS_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PGURL}" ]; then
+            echo "::error::CLEERO_RLS_DATABASE_URL is not set — cannot verify prod RLS state."
+            exit 1
+          fi
+
+          # Fail closed on connection errors: without ON_ERROR_STOP psql exits 0
+          # after printing the error, which would report a broken guard as green.
+          # `set -e` then turns a failed $(...) assignment into a failed step.
+          psql_q() {
+            psql "${PGURL}" --no-psqlrc --tuples-only --no-align \
+              --set=ON_ERROR_STOP=1 -c "$1"
+          }
+
+          # Sanity gate first. A guard that can see no tables at all is pointed at
+          # the wrong database or lost catalog visibility — that must be loud, not
+          # a silent pass caused by an empty result set.
+          total=$(psql_q "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r'")
+          echo "public base tables visible: ${total}"
+          if [ "${total}" -lt 1 ]; then
+            echo "::error::Saw 0 base tables in schema public. Wrong database or missing catalog access — refusing to report success."
+            exit 1
+          fi
+
+          # Mirrors Supabase Advisor's rls_disabled_in_public, and is the same
+          # query as scripts/check-rls.ts in lawoflarge/cleero-predict.
+          disabled=$(psql_q "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity = false order by c.relname")
+
+          if [ -n "${disabled}" ]; then
+            echo "::error::RLS is DISABLED on the following public tables:"
+            echo "${disabled}" | while read -r t; do echo "::error::  - ${t}"; done
+            echo "Apply prisma/manual-migrations/2026-05-06-enable-rls-deny-by-default.sql (add the new tables first). See SECURITY.md in cleero-predict."
+            exit 1
+          fi
+
+          echo "OK: all ${total} public base tables have Row Level Security enabled."
