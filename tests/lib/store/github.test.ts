@@ -1,5 +1,6 @@
 import { test, expect, vi, afterEach } from "vitest";
-import { ghGetJson, ghPutJson } from "@/lib/store/github";
+import { gzipSync } from "node:zlib";
+import { ghGetJson, ghPutJson, ghGetSnapshot } from "@/lib/store/github";
 
 const cfg = { repo: "o/r", token: "t", branch: "main" };
 afterEach(() => vi.restoreAllMocks());
@@ -95,4 +96,87 @@ test("ghPutJson truncates huge error bodies", async () => {
   expect(err).toBeInstanceOf(Error);
   expect((err as Error).message).toContain("GH PUT 502");
   expect((err as Error).message.length).toBeLessThan(700);
+});
+
+// --- Snapshot reads (tarball) -------------------------------------------------
+// The dashboard reads ~700 small JSON files per render. One tarball carries all of
+// them, so these tests pin the TAR parsing the snapshot path depends on.
+
+/** Build a POSIX ustar entry, splitting long paths across name/prefix like GitHub does. */
+function tarEntry(path: string, body: string, type = "0"): Buffer {
+  const h = Buffer.alloc(512);
+  let name = path, prefix = "";
+  if (name.length > 100) {
+    // ustar splits at a "/" so that prefix + "/" + name rebuilds the path.
+    const i = name.indexOf("/", name.length - 100);
+    prefix = name.slice(0, i);
+    name = name.slice(i + 1);
+  }
+  h.write(name, 0, 100, "utf8");
+  h.write("0000644\0", 100, 8, "utf8");
+  h.write(Buffer.byteLength(body).toString(8).padStart(11, "0") + "\0", 124, 12, "utf8");
+  h.write("0".padStart(11, "0") + "\0", 136, 12, "utf8");
+  h.write("        ", 148, 8, "utf8"); // checksum placeholder = spaces
+  h.write(type, 156, 1, "utf8");       // typeflag: "0" file, "5" dir, "g" pax global header
+  h.write("ustar\0", 257, 6, "utf8");
+  h.write("00", 263, 2, "utf8");
+  h.write(prefix, 345, 155, "utf8");
+  let sum = 0;
+  for (const b of h) sum += b;
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "utf8");
+  const data = Buffer.alloc(Math.ceil(Buffer.byteLength(body) / 512) * 512);
+  data.write(body, 0, "utf8");
+  return Buffer.concat([h, data]);
+}
+
+// GitHub's tarball opens with a pax_global_header entry and the repo's root directory
+// before any file — both must be ignored when working out what prefix to strip.
+function tarball(root: string, files: Record<string, string>): Buffer {
+  const parts = [
+    tarEntry("pax_global_header", "52 comment=227a021ef94ddfeda7bcbcc6fb80c948f40a43ae\n", "g"),
+    tarEntry(`${root}/`, "", "5"),
+    ...Object.entries(files).map(([p, b]) => tarEntry(`${root}/${p}`, b)),
+  ];
+  return gzipSync(Buffer.concat([...parts, Buffer.alloc(1024)]));
+}
+
+test("ghGetSnapshot returns every JSON file keyed by repo-relative path", async () => {
+  const tgz = tarball("owner-repo-abc123", {
+    "README.md": "not json",
+    "data/run-status.json": JSON.stringify({ lastRun: "2026-08-25", perApp: { a: {} } }),
+    "data/config.json": JSON.stringify({ apps: {} }),
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(tgz), { status: 200 })));
+  const snap = await ghGetSnapshot(cfg);
+  expect(snap.get("data/run-status.json")).toEqual({ lastRun: "2026-08-25", perApp: { a: {} } });
+  expect(snap.get("data/config.json")).toEqual({ apps: {} });
+  expect(snap.has("README.md")).toBe(false); // non-JSON is skipped
+});
+
+test("ghGetSnapshot reassembles paths that overflow TAR's 100-byte name field", async () => {
+  // Real paths run to ~119 chars once GitHub's "owner-repo-<40-char-sha>/" root is prepended,
+  // so the ustar prefix field carries the front of the path. Dropping it loses the file.
+  const root = "lawoflarge-appstore-command-center-data-227a021ef94ddfeda7bcbcc6fb80c948f40a43ae";
+  const long = "data/6767226388/analytics/2026-08.json";
+  expect(`${root}/${long}`.length).toBeGreaterThan(100);
+  const tgz = tarball(root, { [long]: JSON.stringify([{ day: "2026-08-01", downloads: 7 }]) });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(tgz), { status: 200 })));
+  const snap = await ghGetSnapshot(cfg);
+  expect(snap.get(long)).toEqual([{ day: "2026-08-01", downloads: 7 }]);
+});
+
+test("ghGetSnapshot throws on a failed tarball fetch", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
+  await expect(ghGetSnapshot(cfg)).rejects.toThrow("GH TARBALL 403");
+});
+
+test("ghGetSnapshot ignores the pax_global_header when deriving the root prefix", async () => {
+  // GitHub prepends a "pax_global_header" entry whose name has no directory part. Treating it
+  // as the archive root strips 18 characters off every real path, so the snapshot silently
+  // holds no path the app ever asks for and every page renders empty.
+  const root = "lawoflarge-appstore-command-center-data-227a021ef94ddfeda7bcbcc6fb80c948f40a43ae";
+  const tgz = tarball(root, { "data/run-status.json": JSON.stringify({ perApp: { a: {} } }) });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(tgz), { status: 200 })));
+  const snap = await ghGetSnapshot(cfg);
+  expect([...snap.keys()]).toEqual(["data/run-status.json"]);
 });

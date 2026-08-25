@@ -12,6 +12,8 @@ export interface DataRepoProbe {
   reason: ProbeReason;
   /** GitHub echoes a fine-grained PAT's expiry on every API response. Null for classic PATs. */
   tokenExpiresAt: string | null;
+  /** Core-API requests left in this hour, from x-ratelimit-remaining. Null if not sent. */
+  rateRemaining: number | null;
   hint: string;
 }
 
@@ -28,10 +30,18 @@ const HINTS: Record<ProbeReason, string> = {
   unexpected: "GitHub answered with an unexpected status.",
 };
 
+// A single probe request succeeds on the last of the hourly quota, so a bare 200 says only
+// "this one request worked" — during the 2026-08-25 outage that read as healthy while every
+// page still threw. Below this many requests, the probe names the budget rather than claiming
+// the repo is simply fine.
+const LOW_QUOTA = 1000;
+
 export function classifyDataRepoProbe(
   status: number, headers: { get(name: string): string | null },
 ): DataRepoProbe {
   const tokenExpiresAt = headers.get("github-authentication-token-expiration");
+  const rawRemaining = headers.get("x-ratelimit-remaining");
+  const rateRemaining = rawRemaining === null || rawRemaining === "" ? null : Number(rawRemaining);
   let reason: ProbeReason;
   if (status === 200) reason = "ok";
   else if (status === 401) reason = "token-invalid";
@@ -41,5 +51,10 @@ export function classifyDataRepoProbe(
   else if (status === 403) {
     reason = headers.get("x-ratelimit-remaining") === "0" ? "rate-limited" : "token-lacks-access";
   } else reason = "unexpected";
-  return { ok: reason === "ok", status, reason, tokenExpiresAt, hint: HINTS[reason] };
+  let hint = HINTS[reason];
+  if (reason === "ok" && rateRemaining !== null && rateRemaining < LOW_QUOTA) {
+    hint = `The data repo is reachable, but only ${rateRemaining} GitHub API requests remain ` +
+      "this hour. Reads start failing once that reaches zero; the quota refills within the hour.";
+  }
+  return { ok: reason === "ok", status, reason, tokenExpiresAt, rateRemaining, hint };
 }
