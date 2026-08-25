@@ -1,9 +1,11 @@
 import { env } from "@/env";
-import { ghGetJson, ghPutJson, type GhConfig } from "./github";
+import { ghGetJson, ghPutJson, ghGetSnapshot, type GhConfig } from "./github";
 
 export interface GhBackend {
   get<T>(path: string): Promise<{ value: T; sha: string } | null>;
   put(path: string, value: unknown, sha: string | null, message: string): Promise<void>;
+  /** Every JSON file in the repo in one request. Absent backends fall back to per-file gets. */
+  snapshot?(): Promise<Map<string, unknown>>;
 }
 
 export function ghBackendFromEnv(): GhBackend {
@@ -14,6 +16,7 @@ export function ghBackendFromEnv(): GhBackend {
   return {
     get: (p) => ghGetJson(cfg, p),
     put: (p, v, sha, m) => ghPutJson(cfg, p, v, sha, m),
+    snapshot: () => ghGetSnapshot(cfg),
   };
 }
 
@@ -37,21 +40,42 @@ async function retryOn409<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// Per-instance read cache for page renders. Pages are force-dynamic and read
-// hundreds of small JSON files per render through the GitHub Contents API (one
-// request per file). Without caching, every reload re-fetched all of them, so a
-// handful of reloads/refreshes exhausted GitHub's 5,000 req/hr limit — reads then
-// 403'd and the whole dashboard threw a server-side exception until the rate window
-// reset. The data changes only once a day (the cron), so a short TTL is safe.
-// Opt-in via `cacheReads` so read-modify-write callers (the config writer, the cron
-// collection) keep reading fresh; writes always drop their own path so an in-app
-// save or refresh shows new data immediately on a warm instance.
+// Fallback read cache, used only when the snapshot below is unavailable. Pages are
+// force-dynamic and read hundreds of small JSON files per render through the GitHub
+// Contents API (one request per file), so without either mechanism a handful of reloads
+// exhausted GitHub's 5,000 req/hr limit — reads then 403'd and the whole dashboard threw
+// a server-side exception until the rate window reset.
 const READ_TTL_MS = 300_000;
 const readCache = new Map<string, { value: unknown; at: number }>();
 
 export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
+  // One tarball carries every JSON file in the repo, and GitHub serves it via codeload,
+  // which bills no API quota — so a whole render costs zero of the hourly budget instead
+  // of ~700 requests. It is deliberately scoped to this store (one render) rather than
+  // shared across renders: there is no quota reason to hold it, and a per-render snapshot
+  // means every page sees the current commit and an in-app save shows up immediately.
+  // Memoised as the *promise* so a parallel fan-out of reads still takes only one.
+  let snapshot: Promise<Map<string, unknown> | null> | null = null;
+  function loadSnapshot(): Promise<Map<string, unknown> | null> {
+    if (!gh.snapshot) return Promise.resolve(null);
+    snapshot ??= gh.snapshot().catch((e: unknown) => {
+      // Falling back to per-file reads keeps the page alive, but it is the expensive path
+      // and the reason a quota outage would recur — say so in the runtime logs.
+      console.error("snapshot unavailable, falling back to per-file reads:", e);
+      return null;
+    });
+    return snapshot;
+  }
+
   async function readRaw<T>(path: string): Promise<{ value: T; sha: string } | null> {
     if (!opts.cacheReads) return gh.get<T>(path);
+    const snap = await loadSnapshot();
+    if (snap) {
+      const hit = snap.get(path);
+      // sha is only consumed by the read-modify-write callers, and those never set
+      // cacheReads — they re-read through gh.get to get a live sha.
+      return hit === undefined ? null : { value: hit as T, sha: "" };
+    }
     const hit = readCache.get(path);
     if (hit && Date.now() - hit.at < READ_TTL_MS) {
       return hit.value as { value: T; sha: string } | null;
@@ -59,6 +83,11 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
     const r = await gh.get<T>(path);
     readCache.set(path, { value: r, at: Date.now() });
     return r;
+  }
+  // A write invalidates both caches so a later read on this store sees the new value.
+  function dropCaches(path: string) {
+    readCache.delete(path);
+    snapshot = null;
   }
   return {
     async readJson<T>(path: string, fallback: T): Promise<T> {
@@ -70,7 +99,7 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
         const existing = await gh.get(path);
         await gh.put(path, value, existing?.sha ?? null, message);
       });
-      readCache.delete(path);
+      dropCaches(path);
     },
     /**
      * Merge rows into an array-of-{day} file, replacing same-day entries.
@@ -93,7 +122,7 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
         const merged = [...map.values()].sort((a, b) => a.day.localeCompare(b.day));
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
-      readCache.delete(path);
+      dropCaches(path);
     },
     /** Merge rows into an array file keyed by a composite key, replacing dupes. */
     async upsertKeyedArray<T>(
@@ -107,7 +136,7 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
         const merged = [...map.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
         await gh.put(path, merged, existing?.sha ?? null, message);
       });
-      readCache.delete(path);
+      dropCaches(path);
     },
   };
 }

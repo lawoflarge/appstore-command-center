@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 interface Health {
   ok?: boolean; reason?: string; hint?: string; status?: number;
-  repo?: string; tokenExpiresAt?: string | null; detail?: string;
+  repo?: string; tokenExpiresAt?: string | null; rateRemaining?: number | null; detail?: string;
 }
 
 // Every page reads the data repo through the GitHub Contents API, so anything wrong with
@@ -47,6 +47,9 @@ export default function Error({
                 repo {health.repo}
                 {typeof health.status === "number" ? ` · GitHub answered ${health.status}` : ""}
                 {health.tokenExpiresAt ? ` · token expires ${health.tokenExpiresAt}` : ""}
+                {typeof health.rateRemaining === "number"
+                  ? ` · ${health.rateRemaining} API requests left this hour`
+                  : ""}
               </p>
             )}
             {health.ok && (
