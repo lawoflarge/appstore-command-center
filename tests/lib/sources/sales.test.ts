@@ -1,7 +1,7 @@
-import { test, expect } from "vitest";
+import { test, expect, describe, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseTsv } from "@/lib/asc/client";
-import { collectSales } from "@/lib/sources/sales";
+import { collectSales, collectSalesWindow } from "@/lib/sources/sales";
 
 const tsv = readFileSync(__dirname + "/../../fixtures/sales-2026-05-18.tsv", "utf8");
 
@@ -90,4 +90,39 @@ test("collectSales buckets proceeds by their reported Currency of Proceeds", asy
   expect(rows["6773480175"].proceedsUsd).toBeCloseTo(24.87, 2);
   // split by currency so fx.toEur can convert each correctly
   expect(rows["6773480175"].proceedsByCcy).toEqual({ EUR: 3.56, GBP: 2.82, BRL: 18.49 });
+});
+
+// The cron used to take the FIRST lag day (day-1…day-5) that had rows and write only that one.
+// A day that was never "the newest available" at any run — e.g. the 2026-07-20 FormatFox Pro
+// refund (Units -1) — was skipped for good, so the dashboard overstated proceeds by 3.71 €.
+// collectSalesWindow must return EVERY day in the trailing window that has rows for the batch.
+describe("collectSalesWindow", () => {
+  const header = IAP_HEADER + "\tCurrency of Proceeds";
+  const dayRows = (units: string, proceeds: string) => parseTsv([
+    header,
+    `6773480175\tnetguard\t1\tDE\t1\t0\t\t`,
+    `6773486248\tnetguard.pro\t${units}\tUS\tIA1\t${proceeds}\tnetguard\tUSD`,
+  ].join("\n"));
+
+  it("returns every lag day that has rows, oldest first, not just the newest", async () => {
+    const fetched: string[] = [];
+    const fetchTsv = async (day: string) => {
+      fetched.push(day);
+      if (day === "2026-07-17") return dayRows("1", "4.24");   // the sale
+      if (day === "2026-07-20") return dayRows("-1", "4.24");  // its refund three days later
+      if (day === "2026-07-21") return [];                      // Apple hasn't published it yet
+      return dayRows("0", "0");                                 // free downloads only
+    };
+    const out = await collectSalesWindow(fetchTsv, [{ appId: "6773480175", sku: "netguard" }], "2026-07-22");
+    expect(fetched).toEqual(["2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20", "2026-07-21"]);
+    const days = out["6773480175"];
+    expect(days.map((d) => d.day)).toEqual(["2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20"]);
+    expect(days[0].proceedsByCcy).toEqual({ USD: 4.24 });
+    expect(days[3].proceedsByCcy).toEqual({ USD: -4.24 }); // the refund lands as a negative day
+  });
+
+  it("returns nothing for an app with no rows anywhere in the window", async () => {
+    const out = await collectSalesWindow(async () => [], [{ appId: "6773480175", sku: "netguard" }], "2026-07-22");
+    expect(out).toEqual({});
+  });
 });

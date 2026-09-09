@@ -100,6 +100,29 @@ describe("buildIapBreakdown", () => {
     expect(r.appsWithRevenue).toBe(2);
   });
 
+  // Apple posts a refund as a negative day (Units -1) — MixGrade Pro, bought 2026-09-02 for
+  // 299,000 VND and refunded 09-06. When the refund converts at a different ECB rate than the
+  // sale, the app nets a few cents negative; that app must still count towards the total so the
+  // "IAP & subs total" stat equals the "In-app & subs" stat from buildRevenue (both sum every
+  // day), instead of the two disagreeing by the hidden app's net.
+  it("keeps a net-negative (refunded) app in the total and the by-app view", () => {
+    const r = buildIapBreakdown([
+      { appId: "1", name: "NetGuard", sales: [s("2026-09-02", 5.0)] },
+      { appId: "2", name: "MixGrade", sales: [s("2026-09-02", 8.17), s("2026-09-06", -8.2)] },
+      { appId: "3", name: "Soccer",   sales: [s("2026-09-05", 0)] },
+    ]);
+    expect(r.byDay).toEqual([
+      { day: "2026-09-02", proceeds: 13.17 },
+      { day: "2026-09-06", proceeds: -8.2 },
+    ]);
+    expect(r.totalProceeds).toBe(4.97);
+    expect(r.byApp).toEqual([
+      { appId: "1", name: "NetGuard", proceeds: 5.0 },
+      { appId: "2", name: "MixGrade", proceeds: -0.03 },
+    ]);
+    expect(r.appsWithRevenue).toBe(2);
+  });
+
   it("is empty-safe", () => {
     const r = buildIapBreakdown([{ appId: "1", name: "X", sales: [] }]);
     expect(r).toEqual({ totalProceeds: 0, byApp: [], byDay: [], appsWithRevenue: 0 });

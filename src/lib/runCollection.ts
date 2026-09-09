@@ -1,17 +1,17 @@
 import { env, type Env } from "@/env";
-import { todayUtc, addDays } from "@/lib/dates";
+import { todayUtc } from "@/lib/dates";
 import { makeStore, ghBackendFromEnv, type Store } from "@/lib/store/store";
 import { runDailyCollection, type OrchestratorDeps } from "@/lib/orchestrator";
 import { ascKeyFromEnv, type AscKey } from "@/lib/asc/jwt";
 import { discoverApps, ascFetchApps } from "@/lib/sources/apps";
-import { collectSales, ascFetchSalesTsv } from "@/lib/sources/sales";
+import { collectSalesWindow, ascFetchSalesTsv } from "@/lib/sources/sales";
 import { parseAnalyticsGroups, ensureOngoingRequest } from "@/lib/sources/analytics";
 import { listOngoingRequests, createOngoingRequest, fetchLatestAnalyticsCsv } from "@/lib/sources/asc-live";
 import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { configPath, admobPath, type Config, type RunStatus, type SalesDay } from "@/lib/store/paths";
+import { configPath, admobPath, type Config, type RunStatus } from "@/lib/store/paths";
 import { admobConfigured, collectAdmob, type AdMobRow } from "@/lib/sources/admob";
 import { fetchEurRates, toEur, type EurRates } from "@/lib/fx";
 
@@ -29,29 +29,28 @@ export interface CollectionResult {
 function makeDeps(e: Env, key: AscKey, config: Config): OrchestratorDeps {
   return {
     discoverApps: () => discoverApps(ascFetchApps(key), todayUtc()),
-    // Apple's DAILY sales report for `day` doesn't exist yet (it publishes ~24-48h later,
-    // longer over weekends). Walk back day-1…day-5 and take the first report that has rows,
-    // so proceeds / IAP / subscription revenue actually flow instead of always being empty.
+    // Apple's DAILY sales report for `day` doesn't exist yet (it publishes ~24-48h later, longer
+    // over weekends), so collect the whole trailing window day-5…day-1 — every day that has rows,
+    // not just the newest (see collectSalesWindow for the days the old walk lost).
     collectSales: async (apps, day) => {
-      const fetchTsv = ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER);
-      for (let lag = 1; lag <= 5; lag++) {
-        const reportDay = addDays(day, -lag);
-        const res = await collectSales(fetchTsv, apps, reportDay);
-        if (Object.keys(res).length > 0) {
-          // Convert each sale's mixed-currency proceeds to EUR with that report day's ECB rates so
-          // the revenue surfaces stop counting e.g. 18.49 BRL as 18.49 €. Best-effort: a failed FX
-          // fetch falls back to the static table in toEur; a row whose currency wasn't captured
-          // (empty proceedsByCcy) is left without proceedsEur so readers fall back to the raw lump.
-          const rates = await fetchEurRates(reportDay).catch(() => ({} as EurRates));
-          for (const sd of Object.values(res) as SalesDay[]) {
-            if (sd.proceedsByCcy && Object.keys(sd.proceedsByCcy).length > 0) {
-              sd.proceedsEur = toEur(sd.proceedsByCcy, rates);
-            }
+      const byApp = await collectSalesWindow(ascFetchSalesTsv(key, e.ASC_VENDOR_NUMBER), apps, day);
+      // Convert each sale's mixed-currency proceeds to EUR with that report day's ECB rates so the
+      // revenue surfaces stop counting e.g. 18.49 BRL as 18.49 €. Best-effort: a failed FX fetch
+      // falls back to the static table in toEur; a row whose currency wasn't captured (empty
+      // proceedsByCcy) is left without proceedsEur so readers fall back to the raw lump.
+      const ratesByDay = new Map<string, EurRates>();
+      for (const days of Object.values(byApp)) {
+        for (const sd of days) {
+          if (!sd.proceedsByCcy || Object.keys(sd.proceedsByCcy).length === 0) continue;
+          let rates = ratesByDay.get(sd.day);
+          if (!rates) {
+            rates = await fetchEurRates(sd.day).catch(() => ({} as EurRates));
+            ratesByDay.set(sd.day, rates);
           }
-          return res;
+          sd.proceedsEur = toEur(sd.proceedsByCcy, rates);
         }
       }
-      return {};
+      return byApp;
     },
     collectAnalytics: async (appId) => {
       const reqId = await ensureOngoingRequest(appId,

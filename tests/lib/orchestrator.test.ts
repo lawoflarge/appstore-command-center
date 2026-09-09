@@ -18,7 +18,7 @@ function memStore() {
 
 const okDeps = (over: any = {}) => ({
   discoverApps: async () => [{ appId: "1", name: "A", bundleId: "b", sku: "s", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] }],
-  collectSales: async () => ({ "1": { day: "2026-05-18", byCountry: { DE: 5 }, total: 5, redownloads: 0, proceedsUsd: 0 } }),
+  collectSales: async () => ({ "1": [{ day: "2026-05-18", byCountry: { DE: 5 }, total: 5, redownloads: 0, proceedsUsd: 0 }] }),
   collectAnalytics: async () => ({}),
   collectReviews: async () => [],
   collectRatings: async () => ({ day: "2026-05-18", byCountry: {}, avg: 0, count: 0 }),
@@ -66,8 +66,8 @@ test("one app's analytics failure does not affect another app", async () => {
         { appId: "2", name: "B", bundleId: "b2", sku: "s2", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
       ],
       collectSales: async () => ({
-        "1": { day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 },
-        "2": { day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 },
+        "1": [{ day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 }],
+        "2": [{ day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 }],
       }),
       collectAnalytics: async (id: string) => { if (id === "1") throw new Error("a1 down"); return {}; },
     }),
@@ -146,8 +146,8 @@ test("appIds restricts per-app collection to the batch; intelligence:false skips
         { appId: "2", name: "B", bundleId: "b2", sku: "s2", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
       ],
       collectSales: async () => ({
-        "1": { day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 },
-        "2": { day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 },
+        "1": [{ day: "2026-05-18", byCountry: {}, total: 1, redownloads: 0, proceedsUsd: 0 }],
+        "2": [{ day: "2026-05-18", byCountry: {}, total: 2, redownloads: 0, proceedsUsd: 0 }],
       }),
     }),
   });
@@ -168,6 +168,30 @@ test("finish pass writes insights from store + merges status without re-collecti
   const status = await runDailyCollection({ day: "2026-05-18", store: store as any, appIds: [], intelligence: true, deps: okDeps() });
   expect(store.fs.get("data/insights.json").generatedAt).toBe("2026-05-18");
   expect(status.perApp["1"]?.sales?.ok).toBe(true); // earlier batch's mark survived the merge
+});
+
+// The sales collector now returns the whole trailing window (day-5…day-1) per app, so a day that
+// wasn't the newest at any run (a refund posted days after the sale) is still written. Every day
+// must land in ITS OWN month file, and the status must count the days, not "1 row".
+test("writes every sales day the window returns, each into its own month file", async () => {
+  const store = memStore();
+  const status = await runDailyCollection({
+    day: "2026-08-02", store: store as any,
+    deps: okDeps({
+      collectSales: async () => ({
+        "1": [
+          { day: "2026-07-30", byCountry: { US: 1 }, total: 1, redownloads: 0, proceedsUsd: 4.24, proceedsByCcy: { USD: 4.24 }, proceedsEur: 3.71 },
+          { day: "2026-07-31", byCountry: {}, total: 0, redownloads: 0, proceedsUsd: -4.24, proceedsByCcy: { USD: -4.24 }, proceedsEur: -3.71 },
+          { day: "2026-08-01", byCountry: { DE: 2 }, total: 2, redownloads: 0, proceedsUsd: 0, proceedsByCcy: {} },
+        ],
+      }),
+    }),
+  });
+  expect(store.fs.get("data/1/sales/2026-07.json").map((r: any) => [r.day, r.proceedsEur])).toEqual([
+    ["2026-07-30", 3.71], ["2026-07-31", -3.71],
+  ]);
+  expect(store.fs.get("data/1/sales/2026-08.json").map((r: any) => r.day)).toEqual(["2026-08-01"]);
+  expect(status.perApp["1"].sales).toMatchObject({ ok: true, rows: 3 });
 });
 
 // 2026-07-15 outage: a GitHub 502 "Unicorn" HTML error page (~55 kB, inline base64 image)

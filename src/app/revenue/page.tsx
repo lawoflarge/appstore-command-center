@@ -157,7 +157,8 @@ export default async function Revenue() {
         <p className="mb-4 text-xs text-[var(--ink-2)]">
           App Store developer proceeds from in-app purchases &amp; subscriptions, by app and by day.
           From Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization).
-          Amounts summed at reported value (no FX). Apple reports proceeds, not a transaction count.
+          Converted to EUR with the ECB rate of each report day. A refund shows as a negative day on
+          the date Apple posts it (Apple reports proceeds, not a transaction count).
         </p>
         <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="IAP &amp; subs total" value={eur(iap.totalProceeds)} />
