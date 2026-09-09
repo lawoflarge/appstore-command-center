@@ -2,7 +2,7 @@ import {
   salesPath, analyticsPath, ratingsPath, keywordsPath, reviewsPath,
   appMetaPath, configPath, insightsPath, runStatusPath,
   type AppMeta, type Config, type RunStatus, type Review,
-  type AnalyticsDay, type KeywordRank,
+  type AnalyticsDay, type KeywordRank, type SalesDay,
 } from "@/lib/store/paths";
 import type { Store } from "@/lib/store/store";
 import type { AppInput } from "@/lib/intelligence/engine";
@@ -87,7 +87,8 @@ async function buildIntelInputsFromStore(
 
 export interface OrchestratorDeps {
   discoverApps: () => Promise<AppMeta[]>;
-  collectSales: (apps: { appId: string; sku: string }[], day: string) => Promise<Record<string, any>>;
+  /** Every sales day in the trailing window (day-5…day-1) that has rows, per app — see collectSalesWindow. */
+  collectSales: (apps: { appId: string; sku: string }[], day: string) => Promise<Record<string, SalesDay[]>>;
   collectAnalytics: (appId: string) => Promise<Record<string, any>>;
   collectReviews: (appId: string) => Promise<Review[]>;
   collectRatings: (appId: string, day: string) => Promise<any>;
@@ -154,14 +155,14 @@ export async function runDailyCollection(input: {
   }));
 
   const appIds = apps.map((a) => a.appId);
-  let salesByApp: Record<string, any> = {};
+  let salesByApp: Record<string, SalesDay[]> = {};
   // Skip the account-wide sales walk entirely when this run collects no apps (the refresh
   // "finish" phase, appIds: []) — otherwise collectSales walks all 5 lag days looking for a
   // row that can never match an empty app set, burning ~5 sequential ASC TSV fetches for nothing.
   if (apps.length > 0) {
     try {
       salesByApp = await deps.collectSales(apps, day);
-      appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id] ? 1 : 0 }));
+      appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id]?.length ?? 0 }));
     } catch (e: any) {
       appIds.forEach((id) => mark(id, "sales", false, { error: String(e?.message ?? e) }));
     }
@@ -172,14 +173,22 @@ export async function runDailyCollection(input: {
   // blew the 60s Hobby function cap once analytics started doing real CSV downloads.
   const perApp = apps.map(async (a) => {
     const id = a.appId;
-    // Sales rows carry a lagged report date (see cron route); file them under their own
-    // day so a month-boundary lag lands in the correct month file. The write is guarded
-    // (like every other per-app write below): a transient GitHub Contents API error must
-    // mark this source failed, never reject Promise.all and 500 the whole cron.
-    if (salesByApp[id]) {
+    // Sales rows carry lagged report dates (the trailing window, see collectSalesWindow); file
+    // each under its own day, grouped per month file so a window spanning a month boundary lands
+    // in both files with one write each. The write is guarded (like every other per-app write
+    // below): a transient GitHub Contents API error must mark this source failed, never reject
+    // Promise.all and 500 the whole cron.
+    if (salesByApp[id]?.length) {
       try {
-        const sd = salesByApp[id].day ?? day;
-        await store.upsertDailyArray(salesPath(id, sd), [salesByApp[id]], `data: sales ${id} ${sd}`);
+        const byFile = new Map<string, SalesDay[]>();
+        for (const sd of salesByApp[id]) {
+          const path = salesPath(id, sd.day);
+          byFile.set(path, [...(byFile.get(path) ?? []), sd]);
+        }
+        for (const [path, rows] of byFile) {
+          const days = rows.map((r) => r.day);
+          await store.upsertDailyArray(path, rows, `data: sales ${id} ${days[0]}..${days[days.length - 1]}`);
+        }
       } catch (e: any) { mark(id, "sales", false, { error: String(e?.message ?? e) }); }
     }
 

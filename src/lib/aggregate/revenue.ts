@@ -70,7 +70,7 @@ export function buildRevenue(
 // separate transaction count, so this is a revenue breakdown, not a purchase count.)
 export interface IapBreakdown {
   totalProceeds: number;
-  byApp: { appId: string; name: string; proceeds: number }[]; // desc, apps with >0 only
+  byApp: { appId: string; name: string; proceeds: number }[]; // desc, apps with non-zero net only
   byDay: { day: string; proceeds: number }[];                 // ascending by day
   appsWithRevenue: number;
 }
@@ -88,12 +88,15 @@ export function buildIapBreakdown(
       appProceeds += p;
       dayMap.set(s.day, (dayMap.get(s.day) ?? 0) + p);
     }
-    if (appProceeds > 0) byApp.push({ appId, name, proceeds: round2(appProceeds) });
+    // A refund is a negative day (Apple posts Units -1 on the refund date), so an app can net
+    // slightly negative when the refund converts at another ECB rate than the sale. Keep every
+    // non-zero app so the total here always equals buildRevenue's iapProceeds (both sum all days).
+    if (round2(appProceeds) !== 0) byApp.push({ appId, name, proceeds: round2(appProceeds) });
   }
   byApp.sort((a, b) => b.proceeds - a.proceeds);
   const byDay = [...dayMap.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([day, p]) => ({ day, proceeds: round2(p) }));
-  const totalProceeds = round2(byApp.reduce((s, a) => s + a.proceeds, 0));
+  const totalProceeds = round2(byDay.reduce((s, d) => s + d.proceeds, 0));
   return { totalProceeds, byApp, byDay, appsWithRevenue: byApp.length };
 }
