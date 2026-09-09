@@ -64,17 +64,18 @@ export async function collectSales(
 // report can still be regionally partial. The cron used to walk day-1…day-5 and keep only the
 // FIRST report with rows — a day that was never "the newest" at any run (the 2026-07-20 FormatFox
 // Pro refund: 37 app-days in total) was skipped for good. Collect EVERY day in the trailing window
-// instead; the store upserts by day, so re-writing a day is how a partial one gets healed.
+// instead; the store upserts by day, so re-writing a day is how a partial one gets healed. The
+// reports are fetched in parallel (one small account-wide gzip each) so the window costs about one
+// round-trip of wall-clock, not five, ahead of the per-app work under Vercel's 60s cap.
 export const SALES_WINDOW_DAYS = 5;
 
 export async function collectSalesWindow(
   fetchTsv: FetchSalesTsv, apps: SalesAppRef[], day: string, windowDays = SALES_WINDOW_DAYS,
 ): Promise<Record<string, SalesDay[]>> {
+  const days = Array.from({ length: windowDays }, (_, i) => addDays(day, i - windowDays)); // oldest first
+  const results = await Promise.all(days.map((d) => collectSales(fetchTsv, apps, d)));
   const out: Record<string, SalesDay[]> = {};
-  for (let lag = windowDays; lag >= 1; lag--) {
-    const res = await collectSales(fetchTsv, apps, addDays(day, -lag));
-    for (const [appId, sd] of Object.entries(res)) (out[appId] ??= []).push(sd);
-  }
+  for (const res of results) for (const [appId, sd] of Object.entries(res)) (out[appId] ??= []).push(sd);
   return out;
 }
 

@@ -38,18 +38,13 @@ function makeDeps(e: Env, key: AscKey, config: Config): OrchestratorDeps {
       // revenue surfaces stop counting e.g. 18.49 BRL as 18.49 €. Best-effort: a failed FX fetch
       // falls back to the static table in toEur; a row whose currency wasn't captured (empty
       // proceedsByCcy) is left without proceedsEur so readers fall back to the raw lump.
-      const ratesByDay = new Map<string, EurRates>();
-      for (const days of Object.values(byApp)) {
-        for (const sd of days) {
-          if (!sd.proceedsByCcy || Object.keys(sd.proceedsByCcy).length === 0) continue;
-          let rates = ratesByDay.get(sd.day);
-          if (!rates) {
-            rates = await fetchEurRates(sd.day).catch(() => ({} as EurRates));
-            ratesByDay.set(sd.day, rates);
-          }
-          sd.proceedsEur = toEur(sd.proceedsByCcy, rates);
-        }
-      }
+      const withProceeds = Object.values(byApp).flat()
+        .filter((sd) => sd.proceedsByCcy && Object.keys(sd.proceedsByCcy).length > 0);
+      const ratesByDay = new Map(await Promise.all(
+        [...new Set(withProceeds.map((sd) => sd.day))]
+          .map(async (d) => [d, await fetchEurRates(d).catch(() => ({} as EurRates))] as const),
+      ));
+      for (const sd of withProceeds) sd.proceedsEur = toEur(sd.proceedsByCcy!, ratesByDay.get(sd.day)!);
       return byApp;
     },
     collectAnalytics: async (appId) => {
