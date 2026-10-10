@@ -1,12 +1,12 @@
 # App Store Command Center
 
-A private, single-user dashboard that pulls App Store Connect data daily and turns it into a monitoring + growth tool for **your own** iOS apps. Built to run on Vercel's free tier with **zero recurring cost** — no database, no LLM bills, no SaaS. Daily Vercel Cron auto-discovers every app on your Apple Developer account, runs five collectors (sales, analytics funnel, reviews, ratings, keyword-rank), and commits the raw data as partitioned JSON into a separate private git repo used as the database. A rules-based intelligence layer surfaces anomalies, funnel leaks, keyword opportunities, and a month-end forecast.
+A private, single-user dashboard that pulls App Store Connect data daily and turns it into a monitoring + growth tool for **your own** iOS apps. Built to run on Vercel's free tier with **zero recurring cost**: no database, no LLM bills, no SaaS. Daily Vercel Cron auto-discovers every app on your Apple Developer account, runs five collectors (sales, analytics funnel, reviews, ratings, keyword-rank), and commits the raw data as partitioned JSON into a separate private git repo used as the database. A rules-based intelligence layer surfaces anomalies, funnel leaks, keyword opportunities, and a month-end forecast.
 
-> Designed for the case "I run a handful of iOS apps and want one dashboard instead of bouncing between App Store Connect, Sensor Tower, and a spreadsheet." Not a competitor-tracker, not an MMP — just **your apps**, end-to-end honest.
+> Designed for the case "I run a handful of iOS apps and want one dashboard instead of bouncing between App Store Connect, Sensor Tower, and a spreadsheet." Not a competitor-tracker, not an MMP: just **your apps**, end-to-end honest.
 
 ## Why this exists
 
-App Store Connect's web UI is fine for one-off lookups and useless as a daily driver. Real third-party stacks start at \$50–\$200/month and assume you're running an ad budget. This project is the middle path: an opinionated dashboard you self-host on Vercel Hobby for free, that pulls exactly the same numbers Apple gives you, sliced the way you want.
+App Store Connect's web UI is fine for one-off lookups and useless as a daily driver. Real third-party stacks start at \$50-\$200/month and assume you're running an ad budget. This project is the middle path: an opinionated dashboard you self-host on Vercel Hobby for free, that pulls exactly the same numbers Apple gives you, sliced the way you want.
 
 ## What it shows
 
@@ -23,7 +23,7 @@ App Store Connect's web UI is fine for one-off lookups and useless as a daily dr
 
 ## Honest caveats
 
-- The keyword layer uses the free public iTunes Search API — it records where your app appears in storefront search results for watched terms. It's a valid trend signal, **not** ASA-paid rank and **not** exact organic rank.
+- The keyword layer uses the free public iTunes Search API: it records where your app appears in storefront search results for watched terms. It's a valid trend signal, **not** ASA-paid rank and **not** exact organic rank.
 - **Day-0 expectation:** Apple's Sales Reports have a ~24h publication lag. Analytics ONGOING report requests take ~24h after first creation to publish their first instance. Expect mostly zeros for the first 24-48 hours, real signal from the second daily cron onwards.
 - **Shared latest day:** Glance pins every app to one reference day (the freshest day any app has). Apps Apple hasn't published that day for yet show **N/A** rather than their own older value, so the summary and the chart never contradict each other. In-app proceeds revenue is reported by Apple as a money amount, not a transaction count, so the Revenue tab breaks down proceeds (not number of purchases).
 - **Vercel Hobby 60s function cap.** The cron parallelizes per-app and fits ~10 apps comfortably; beyond that you may need to split it.
@@ -41,7 +41,7 @@ Vercel Cron (0 6 * * *)
     → commit insights.json + run-status.json
 ```
 
-**Git as database.** All collected data lives in a separate private repo as JSON files committed via the GitHub Contents API. No external DB — immune to free-tier database pauses, the whole audit trail of every collection is in git history, and you can clone the data repo locally for offline analysis. Writes use retry-on-409 for concurrent-safety.
+**Git as database.** All collected data lives in a separate private repo as JSON files committed via the GitHub Contents API. No external DB: immune to free-tier database pauses, the whole audit trail of every collection is in git history, and you can clone the data repo locally for offline analysis. Writes use retry-on-409 for concurrent-safety.
 
 **Auth.** Auth.js v5 with GitHub OAuth. The `signIn` callback rejects everyone except the configured `ALLOWED_GITHUB_LOGIN`. Edge middleware gates every page except `/api/auth/*` and `/api/cron`.
 
@@ -60,7 +60,7 @@ Most pages will be empty locally until the cron has run at least once and commit
 
 ## Environment variables
 
-Copy `.env.example` to `.env.local` (server-side only — none are exposed to the client bundle):
+Copy `.env.example` to `.env.local` (server-side only: none are exposed to the client bundle):
 
 | Variable | What it is | How to get it |
 |---|---|---|
@@ -87,16 +87,16 @@ Copy `.env.example` to `.env.local` (server-side only — none are exposed to th
 5. **Create an ASC API key.** App Store Connect → Users and Access → Integrations → Keys → "+". Role: Admin or Developer. Download the `.p8` **(one-time download, save it carefully)**.
 6. **Import into Vercel.** Add New Project → import your fork → Hobby plan. Add every env var above (server-side). Deploy.
 7. **Verify the cron job.** Vercel project → Settings → Cron Jobs should show `0 6 * * *` → `/api/cron`.
-8. **Trigger the first run.** `curl -H "Authorization: Bearer $CRON_SECRET" https://<your-domain>/api/cron` — expect `{"ok": true, ...}`, then check the data repo for fresh commits.
+8. **Trigger the first run.** `curl -H "Authorization: Bearer $CRON_SECRET" https://<your-domain>/api/cron`: expect `{"ok": true, ...}`, then check the data repo for fresh commits.
 9. **Sign in.** Visit `https://<your-domain>`, sign in with the GitHub account matching `ALLOWED_GITHUB_LOGIN`, land on Glance.
 10. **Add keywords.** `/settings` page → per app, add 3-5 terms with their target country. The ASO page starts having data the next time the cron runs.
 
 ## Known limitations
 
 - **Vercel Hobby 60s function cap.** Comfortable for ~10 apps. Beyond that, split the cron.
-- **Cron timing is approximate.** Hobby crons fire roughly once per day near the scheduled time, not at exact 6:00 UTC. Acceptable — the goal is daily cadence, not precision.
+- **Cron timing is approximate.** Hobby crons fire roughly once per day near the scheduled time, not at exact 6:00 UTC. Acceptable: the goal is daily cadence, not precision.
 - **Analytics funnel grows forward only.** Apple's ONGOING reports have ~365-day retention; no way to backfill funnel/conversion history. Sales history backfills ~365 days immediately on first run.
-- **Published Apple developer legal name** is associated with the `.p8` key and visible in App Store listings — Apple platform constraint, not something this dashboard controls.
+- **Published Apple developer legal name** is associated with the `.p8` key and visible in App Store listings: Apple platform constraint, not something this dashboard controls.
 
 ## Tech
 
@@ -104,14 +104,14 @@ Next.js 15 (App Router, TypeScript), pnpm, Vitest, Tailwind v4, Auth.js v5 (GitH
 
 ## Why each design choice
 
-- **Git as DB**: serverless-friendly, immune to free-tier pauses, full audit trail, cheap to clone for offline analysis. The price is sequential commits — solved with retry-on-409 backoff.
+- **Git as DB**: serverless-friendly, immune to free-tier pauses, full audit trail, cheap to clone for offline analysis. The price is sequential commits: solved with retry-on-409 backoff.
 - **Per-app parallelization**: each app writes disjoint paths, so `Promise.all` across apps is safe and brings 4-app wall-clock from 60s+ down to ~30s.
 - **No LLM dependency**: review clustering + weekly digest were dropped to keep operating cost at $0. Reviews are still collected and listed.
 - **Single-user OAuth allowlist**: simplest possible auth that's not "no auth". For multi-user, swap the `signIn` callback for a real ACL.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT: see [LICENSE](LICENSE).
 
 ## Reference documents
 
