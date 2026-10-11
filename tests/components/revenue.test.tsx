@@ -12,6 +12,12 @@ vi.mock("@/lib/store/store", () => ({
   makeStore: () => ({ readJson: async (path: string, fallback: unknown) => records.get(path) ?? fallback }),
 }));
 vi.mock("@/lib/aggregate/api", () => ({ visibleAppIds: async () => ["123"] }));
+vi.mock("@/components/revenue/IapCharts", () => ({
+  IapCharts: (props: unknown) => <output data-testid="all-time-iap-chart">{JSON.stringify(props)}</output>,
+}));
+vi.mock("@/components/revenue/RevenueCharts", () => ({
+  RevenueCharts: (props: unknown) => <output data-testid="all-time-admob-chart">{JSON.stringify(props)}</output>,
+}));
 vi.mock("recharts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("recharts")>();
   return { ...actual, ResponsiveContainer: ({ children }: { children: React.ReactNode }) =>
@@ -37,6 +43,48 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("monthly revenue", () => {
+  it("preserves the full-period dashboard and current Kickbacks month when selecting a historical month", async () => {
+    records.set("data/123/meta.json", { name: "Refund App" });
+    const septemberSale = sale("2026-09-29", -3);
+    records.set("data/123/sales/2026-09.json", [septemberSale]);
+    // A partition overlap must not double-count September in the full-period totals.
+    records.set("data/123/sales/2026-10.json", [septemberSale, sale("2026-10-09", 40)]);
+    const septemberAd = { day: "2026-09-29", app: "Refund App", adUnit: "Banner", earnings: 2, impressions: 100, requests: 120, clicks: 1 };
+    const octoberAd = { day: "2026-10-09", app: "Refund App", adUnit: "Banner", earnings: 5, impressions: 200, requests: 250, clicks: 2 };
+    records.set("data/admob/2026-09.json", [septemberAd]);
+    records.set("data/admob/2026-10.json", [septemberAd, octoberAd]);
+    const septemberKickback = { day: "2026-09-29", earningsEur: 3, lifetimeEur: 10 };
+    records.set("data/kickbacks/2026-09.json", [septemberKickback]);
+    records.set("data/kickbacks/2026-10.json", [septemberKickback, { day: "2026-10-09", earningsEur: 1, lifetimeEur: 12.34 }]);
+
+    const view = render(await RevenuePage({ searchParams: Promise.resolve({ month: "2026-09" }) }));
+    const assertFullPeriod = () => {
+      expect(screen.getByText("Total revenue", { exact: true }).parentElement).toHaveTextContent("56.34 EUR");
+      expect(screen.getByText("IAP & subs total", { exact: true }).parentElement).toHaveTextContent("37.00 EUR");
+      expect(screen.getByText("Lifetime earnings", { exact: true }).parentElement).toHaveTextContent("7.00 EUR");
+      expect(screen.getByText("Lifetime impressions", { exact: true }).parentElement).toHaveTextContent("300");
+      expect(screen.getByText("Kickbacks lifetime", { exact: true }).parentElement).toHaveTextContent("12.34 EUR");
+      expect(screen.getAllByText("This month", { exact: true }).map(label => label.parentElement?.textContent)).toEqual(["This month5.00 EUR", "This month1.00 EUR"]);
+      expect(screen.getByText("Share of total", { exact: true }).parentElement).toHaveTextContent("22%");
+      const iap = JSON.parse(screen.getByTestId("all-time-iap-chart").textContent!);
+      expect(iap.byDay).toEqual([{ day: "2026-09-29", proceeds: -3 }, { day: "2026-10-09", proceeds: 40 }]);
+      expect(iap.byApp).toEqual([{ appId: "123", name: "Refund App", proceeds: 37 }]);
+      const ads = JSON.parse(screen.getByTestId("all-time-admob-chart").textContent!);
+      expect(ads.monthly.map((point: { label: string; earnings: number }) => [point.label, point.earnings])).toEqual([["2026-09", 2], ["2026-10", 5]]);
+      expect(ads.byApp).toEqual([{ name: "Refund App", earnings: 7, impressions: 300 }]);
+      expect(screen.getByTestId("all-time-iap-chart").closest("details")).toBeNull();
+      expect(screen.getByTestId("all-time-admob-chart").closest("details")).toBeNull();
+    };
+    assertFullPeriod();
+    const historicalMonth = screen.getByRole("region", { name: "September 2026" });
+    expect(within(historicalMonth).getByText("App revenue").parentElement).toHaveTextContent("-€1.00");
+
+    view.rerender(await RevenuePage({ searchParams: Promise.resolve({ month: "2026-10" }) }));
+    assertFullPeriod();
+    const currentMonth = screen.getByRole("region", { name: "October 2026" });
+    expect(within(currentMonth).getByText("App revenue").parentElement).toHaveTextContent("€45.00");
+  });
+
   it("changes the month through the URL without changing other dashboard state", () => {
     const revenue = buildMonthlyRevenue([], [], "2026-10", "2026-10-10");
     render(<MonthlyRevenueOverview revenue={revenue} months={["2026-10", "2026-09"]} />);
@@ -66,7 +114,8 @@ describe("monthly revenue", () => {
     const apple = screen.getByRole("region", { name: "Apple proceeds by app" });
     expect(within(apple).getByRole("rowheader", { name: "Refund App" })).toBeInTheDocument();
     expect(within(apple).getAllByText("-€3.00").length).toBeGreaterThan(0);
-    expect(screen.queryByText("€40.00")).not.toBeInTheDocument();
+    expect(within(month).queryByText("€40.00")).not.toBeInTheDocument();
+    expect(within(apple).queryByText("€40.00")).not.toBeInTheDocument();
   });
 
   it("falls back to the current month for an unavailable query value", async () => {

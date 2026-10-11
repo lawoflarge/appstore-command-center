@@ -6,7 +6,7 @@ import { admobPath, kickbacksPath, salesPath, appMetaPath, subscriptionsPath, ad
 import type { AdMobRow } from "@/lib/sources/admob";
 import { rowsInMonth, addDays } from "@/lib/dates";
 import { visibleAppIds } from "@/lib/aggregate/api";
-import { buildRevenue } from "@/lib/aggregate/revenue";
+import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
 import { buildMonthlyRevenue } from "@/lib/aggregate/revenue-monthly";
 import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
 import { IapCharts } from "@/components/revenue/IapCharts";
@@ -14,10 +14,10 @@ import { MonthlyRevenueOverview } from "@/components/revenue/MonthlyRevenueOverv
 import { ActiveSubscriptions } from "@/components/revenue/ActiveSubscriptions";
 
 export const dynamic = "force-dynamic";
+
 const CURRENCY = "EUR";
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const eur = (n: number) => new Intl.NumberFormat("en-IE", { style: "currency", currency: CURRENCY }).format(n);
-const fmtDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const monthlyEur = (n: number) => new Intl.NumberFormat("en-IE", { style: "currency", currency: CURRENCY }).format(n);
 
 interface Acc { earnings: number; impressions: number; requests: number; clicks: number }
 const emptyAcc = (): Acc => ({ earnings: 0, impressions: 0, requests: 0, clicks: 0 });
@@ -28,10 +28,14 @@ function add(map: Map<string, Acc>, key: string, r: AdMobRow) {
   map.set(key, a);
 }
 const toSeries = (map: Map<string, Acc>): SeriesPoint[] =>
-  [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, a]) => ({
-    label, earnings: round2(a.earnings), impressions: a.impressions, requests: a.requests,
+  [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, a]) => ({
+    label,
+    earnings: round2(a.earnings),
+    impressions: a.impressions,
+    requests: a.requests,
     ecpm: a.impressions > 0 ? round2((a.earnings / a.impressions) * 1000) : 0,
   }));
+
 function lastMonths(curMonth: string, n: number): string[] {
   const out: string[] = [];
   let [y, m] = curMonth.split("-").map(Number);
@@ -40,6 +44,14 @@ function lastMonths(curMonth: string, n: number): string[] {
     m -= 1; if (m === 0) { m = 12; y -= 1; }
   }
   return out;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2026-05-31" → "31 May", parsed from the string parts to avoid any timezone shift on the label.
+function fmtDay(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return y && m && d ? `${d} ${MONTHS[m - 1]}` : iso;
 }
 
 export default async function Revenue({ searchParams }: { searchParams?: Promise<{ month?: string | string[] }> }) {
@@ -79,99 +91,196 @@ export default async function Revenue({ searchParams }: { searchParams?: Promise
     } catch { /* An unknown report timezone cannot support a complete-day forecast. */ }
   }
   const revenue = buildMonthlyRevenue(appSales, all, month, now, admobToday, adCoverage);
-  // Detail charts share the selected month and the same verified EUR amounts.
-  const iapByDay = revenue.byDay.map((point) => ({ day: point.day, proceeds: round2(point.oneTime + point.subscriptions + point.otherApple + point.unclassifiedApple) }));
-  const iapByApp = revenue.byApp.map((app) => ({ appId: app.appId, name: app.name, proceeds: app.total }));
-  const selectedAds = rowsInMonth(all, `${month}-01`);
+  const rev = buildRevenue(all, appSales.flatMap((a) => a.sales), kbAll);
+  const iap = buildIapBreakdown(appSales);
+
+  // Kickbacks-derived figures for its own section.
+  const latestKb = kbAll.at(-1) ?? null;
+  const kbThisMonth = round2(kbAll.filter((k) => k.day.slice(0, 7) === curMonth).reduce((s, k) => s + (k.earningsEur ?? 0), 0));
+  const kbLifetimeReported = latestKb?.lifetimeEur ?? rev.kbEarnings;
+
   const dayMap = new Map<string, Acc>();
   const monMap = new Map<string, Acc>();
   const appMap = new Map<string, { earnings: number; impressions: number }>();
   const unitMap = new Map<string, { earnings: number; impressions: number }>();
-  const ads = emptyAcc();
-  for (const r of selectedAds) {
-    add(dayMap, r.day, r); add(monMap, r.day.slice(0, 7), r);
-    for (const [map, key] of [[appMap, r.app], [unitMap, r.adUnit]] as const) {
-      const a = map.get(key) ?? { earnings: 0, impressions: 0 };
-      a.earnings += r.earnings; a.impressions += r.impressions; map.set(key, a);
-    }
-    ads.earnings += r.earnings; ads.impressions += r.impressions;
-    ads.requests += r.requests; ads.clicks += r.clicks;
+  const life = emptyAcc();
+  for (const r of all) {
+    add(dayMap, r.day, r);
+    add(monMap, r.day.slice(0, 7), r);
+    const a = appMap.get(r.app) ?? { earnings: 0, impressions: 0 };
+    a.earnings += r.earnings; a.impressions += r.impressions; appMap.set(r.app, a);
+    const u = unitMap.get(r.adUnit) ?? { earnings: 0, impressions: 0 };
+    u.earnings += r.earnings; u.impressions += r.impressions; unitMap.set(r.adUnit, u);
+    life.earnings += r.earnings; life.impressions += r.impressions;
+    life.requests += r.requests; life.clicks += r.clicks;
   }
-  const breakdown = (map: Map<string, { earnings: number; impressions: number }>): Breakdown[] =>
-    [...map.entries()].map(([name, value]) => ({ name, earnings: round2(value.earnings), impressions: value.impressions })).sort((a, b) => b.earnings - a.earnings);
-  const latestAdmobDay = [adCoverage?.endDay, ...all.map((row) => row.day)].filter((day): day is string => Boolean(day)).sort().at(-1);
+
+  const daily = toSeries(dayMap).slice(-90);
+  const monthly = toSeries(monMap);
+  const byApp: Breakdown[] = [...appMap.entries()]
+    .map(([name, v]) => ({ name, earnings: round2(v.earnings), impressions: v.impressions }))
+    .sort((a, b) => b.earnings - a.earnings);
+  const byAdUnit: Breakdown[] = [...unitMap.entries()]
+    .map(([name, v]) => ({ name, earnings: round2(v.earnings), impressions: v.impressions }))
+    .sort((a, b) => b.earnings - a.earnings);
+
+  const thisMonth = monMap.get(curMonth)?.earnings ?? 0;
+  // Coverage also records zero-earning days; freshness follows the provider's report timezone.
+  const latestAdmobDay = [adCoverage?.endDay, ...all.map((row) => row.day)].filter((day): day is string => Boolean(day)).sort().at(-1) ?? "";
+  const latestAdmobEarnings = dayMap.get(latestAdmobDay)?.earnings ?? 0;
   const completeAdmobDay = adCoverage?.completeThroughDay ?? latestAdmobDay;
-  const admobStale = completeAdmobDay !== undefined && completeAdmobDay < addDays(admobToday ?? now, -1);
-  const ecpm = ads.impressions > 0 ? ads.earnings / ads.impressions * 1000 : null;
-  // Kickbacks' provider-reported lifetime stays separate from monthly app revenue.
-  const latestKb = kbAll.at(-1) ?? null;
-  const kbLifetime = buildRevenue([], [], kbAll).kbEarnings;
-  const kbMonth = round2(rowsInMonth(kbAll, `${month}-01`).reduce((sum, row) => sum + (row.earningsEur ?? 0), 0));
+  const admobStale = completeAdmobDay !== "" && completeAdmobDay < addDays(admobToday ?? now, -1);
+  const ecpm = life.impressions > 0 ? (life.earnings / life.impressions) * 1000 : 0;
+  const eur = (n: number) => `${n.toFixed(2)} ${CURRENCY}`;
+
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
 
   return (
     <main>
       <Nav />
-      <header className="mb-7">
-        <h1 className="text-3xl font-bold tracking-tight">Revenue</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--ink-2)]">A clear view of what your apps earned, where it came from, and where this month is heading.</p>
-      </header>
-      <MonthlyRevenueOverview revenue={revenue} months={availableMonths} />
-      <ActiveSubscriptions snapshot={snapshot} />
-      <section aria-labelledby="apple-revenue-heading" className="mb-8">
-        <h2 id="apple-revenue-heading" className="text-xl font-semibold tracking-tight">Apple proceeds by app</h2>
-        <p className="mb-4 mt-1 text-xs text-[var(--ink-2)]">{monthLabel} · developer proceeds after Apple&apos;s commission · converted to EUR using report-day ECB rates</p>
-        {revenue.byApp.length > 0 ? <>
-          <div className="glass mb-4 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
-              <caption className="sr-only">Apple proceeds by app for {monthLabel}</caption>
-              <thead className="border-b border-[var(--chart-grid)] text-xs text-[var(--ink-2)]"><tr>
-                <th scope="col" className="px-5 py-3 font-medium">App</th>
-                {["One-time", "Subscriptions", "Other / unclassified", "Total"].map((label) => <th scope="col" key={label} className="px-4 py-3 text-right font-medium">{label}</th>)}
-              </tr></thead>
-              <tbody className="divide-y divide-[var(--chart-grid)]">
-                {revenue.byApp.map((app) => <tr key={app.appId} className="hover:bg-white/30">
-                  <th scope="row" className="px-5 py-4 font-medium">{app.name}</th>
-                  <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : eur(app.oneTime)}</td>
-                  <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : eur(app.subscriptions)}</td>
-                  <td className="num px-4 py-4 text-right text-[var(--ink-2)]">{eur(app.otherApple + app.unclassifiedApple)}</td>
-                  <td className="num px-4 py-4 text-right font-semibold">{eur(app.total)}</td>
-                </tr>)}
-              </tbody>
-            </table>
-          </div>
-          <details>
-            <summary className="mb-4 w-fit cursor-pointer rounded-lg px-1 py-2 text-sm font-medium text-[var(--accent)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Explore daily Apple proceeds and app comparison</summary>
-            <IapCharts byDay={iapByDay} byApp={iapByApp} currency={CURRENCY} />
-          </details>
-        </> : <Card className="text-sm text-[var(--ink-2)]">No Apple proceeds are available for this month. Reports normally arrive after the sale date.</Card>}
+      <h1 className="mb-1 text-2xl font-bold tracking-tight">Revenue</h1>
+      <p className="mb-5 text-xs text-[var(--ink-2)]">
+        Total revenue across every app — AdMob ads, App Store in-app purchases &amp; subscriptions,
+        and Kickbacks.ai AI-wait-time ads. Estimated and pre-finalization; App Store proceeds and
+        Kickbacks are ECB-converted to EUR, AdMob is already in EUR.
+      </p>
+
+      {/* Unified revenue: ads + in-app/subscriptions */}
+      <section aria-label="All-time revenue" className="mb-6">
+        <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
+          <Stat label="Total revenue" value={eur(rev.total)} />
+          <Stat label="Ad revenue" value={eur(rev.adEarnings)} />
+          <Stat label="In-app & subs" value={eur(rev.iapProceeds)} />
+          <Stat label="Kickbacks" value={eur(rev.kbEarnings)} />
+          <Stat label="Ad share" value={rev.total > 0 ? pct(rev.adShare) : "—"} />
+        </div>
+        <Card className="text-xs text-[var(--ink-2)]">
+          {rev.iapProceeds > 0
+            ? <>In-app &amp; subscription proceeds come from Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization). Ads are AdMob estimates.</>
+            : <>No in-app or subscription proceeds reported yet. App Store IAP/subscription proceeds appear here from Apple&apos;s daily sales report (Sales and Trends), ~24–48h after a sale.</>}
+        </Card>
       </section>
-      <section aria-labelledby="admob-revenue-heading" className="mb-8">
-        <h2 id="admob-revenue-heading" className="text-xl font-semibold tracking-tight">AdMob performance</h2>
-        <p className="mb-4 mt-1 text-xs text-[var(--ink-2)]">{monthLabel} · estimated earnings before finalization</p>
-        {admobStale && <div className="mb-4 rounded-2xl border border-amber-600/20 bg-amber-50/70 p-4 text-sm text-amber-950">AdMob reports have not updated since <strong>{fmtDay(latestAdmobDay!)}</strong>. New earnings may be missing; the latest collection needs attention.</div>}
-        {selectedAds.length > 0 ? <>
-          <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="Ad impressions" value={ads.impressions.toLocaleString()} />
-            <Stat label="Ad requests" value={ads.requests.toLocaleString()} />
-            <Stat label="Ad clicks" value={ads.clicks.toLocaleString()} />
-            <Stat label="Blended eCPM" value={ecpm === null ? "Unavailable" : eur(ecpm)} />
-          </div>
-          <details>
-            <summary className="mb-4 w-fit cursor-pointer rounded-lg px-1 py-2 text-sm font-medium text-[var(--accent)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Explore AdMob charts and app breakdown</summary>
-            <RevenueCharts daily={toSeries(dayMap)} monthly={toSeries(monMap)} byApp={breakdown(appMap)} byAdUnit={breakdown(unitMap)} currency={CURRENCY} periodLabel={monthLabel} />
-          </details>
-        </> : <Card className="text-sm text-[var(--ink-2)]">No AdMob reports are available for this month.</Card>}
+
+      {/* In-app purchases & subscriptions — broken down by app and by day */}
+      <section className="mb-6">
+        <h2 className="mb-2 text-lg font-semibold">In-app purchases &amp; subscriptions</h2>
+        <p className="mb-4 text-xs text-[var(--ink-2)]">
+          App Store developer proceeds from in-app purchases &amp; subscriptions, by app and by day.
+          From Apple&apos;s daily sales report (Sales and Trends; ~24–48h lag, pre-finalization).
+          Converted to EUR with the ECB rate of each report day. A refund shows as a negative day on
+          the date Apple posts it (Apple reports proceeds, not a transaction count).
+        </p>
+        <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Stat label="IAP &amp; subs total" value={eur(iap.totalProceeds)} />
+          <Stat label="Apps earning" value={String(iap.appsWithRevenue)} />
+          <Stat label="IAP share" value={rev.total > 0 ? pct(rev.iapShare) : "—"} />
+          <Stat label="Top app" value={iap.byApp[0]?.name ?? "—"} />
+        </div>
+        {iap.totalProceeds > 0 ? (
+          <IapCharts byDay={iap.byDay} byApp={iap.byApp} currency={CURRENCY} />
+        ) : (
+          <Card className="text-sm">
+            No in-app or subscription proceeds reported yet. They appear here from Apple&apos;s daily
+            sales report (Sales and Trends), ~24–48h after a sale.
+          </Card>
+        )}
       </section>
-      <section aria-labelledby="kickbacks-heading">
-        <h2 id="kickbacks-heading" className="text-xl font-semibold tracking-tight">Kickbacks</h2>
-        <p className="mb-4 mt-1 text-xs text-[var(--ink-2)]">AI wait-time ad earnings, separate from your iOS app revenue.</p>
-        {latestKb ? <Card>
-          <div className="grid gap-5 sm:grid-cols-3">
-            {[["Reported lifetime", eur(kbLifetime)], [`Recorded in ${monthLabel}`, eur(kbMonth)], [`Latest day · ${fmtDay(latestKb.day)}`, eur(latestKb.earningsEur)]].map(([label, value]) => <div key={label}><p className="text-xs text-[var(--ink-2)]">{label}</p><p className="num mt-1 text-2xl font-semibold">{value}</p></div>)}
+
+      <h2 className="mb-2 text-lg font-semibold">Ad revenue (AdMob)</h2>
+      <p className="mb-4 text-xs text-[var(--ink-2)]">
+        Publisher pub-6563643868702361. Estimated, pre-finalization.
+      </p>
+
+      {admobStale && (
+        <Card className="mb-4 border border-[var(--bad,#c0392b)] text-sm">
+          AdMob reports have not updated since <strong>{fmtDay(latestAdmobDay)}</strong>.
+          New earnings may be missing; the latest collection needs attention.
+        </Card>
+      )}
+
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Stat label="Lifetime earnings" value={eur(life.earnings)} />
+        <Stat label="This month" value={eur(thisMonth)} />
+        <Stat label={latestAdmobDay ? `Latest day · ${fmtDay(latestAdmobDay)}` : "Latest day"} value={eur(latestAdmobEarnings)} />
+        <Stat label="Blended eCPM" value={eur(ecpm)} />
+        <Stat label="Lifetime impressions" value={life.impressions.toLocaleString()} />
+        <Stat label="Ad requests" value={life.requests.toLocaleString()} />
+        <Stat label="Clicks" value={life.clicks.toLocaleString()} />
+        <Stat label="Apps earning" value={String(byApp.length)} />
+      </div>
+
+      {all.length === 0 ? (
+        <Card>
+          <div className="text-sm">
+            No AdMob data yet. Once <code>ADMOB_CLIENT_ID</code> / <code>ADMOB_CLIENT_SECRET</code> /{" "}
+            <code>ADMOB_REFRESH_TOKEN</code> are set in the environment, the daily cron pulls earnings
+            into <code>data/admob/&lt;YYYY-MM&gt;.json</code>. Trigger <code>/api/cron</code> with the
+            bearer secret or wait for 06:00 UTC. Estimated earnings also have AdMob&apos;s own reporting
+            lag.
           </div>
-          <p className="mt-5 border-t border-[var(--chart-grid)] pt-4 text-xs leading-relaxed text-[var(--ink-2)]">Kickbacks provides a running lifetime total. The monthly amount includes only daily activity recorded since syncing began, so it may not represent the full month. Estimates are converted to EUR.</p>
-        </Card> : <Card className="text-sm text-[var(--ink-2)]">No Kickbacks earnings have been collected yet.</Card>}
-      </section>
+        </Card>
+      ) : (
+        <RevenueCharts daily={daily} monthly={monthly} byApp={byApp} byAdUnit={byAdUnit} currency={CURRENCY} />
+      )}
+
+      <h2 className="mb-2 mt-8 text-lg font-semibold">Kickbacks (AI wait-time ads)</h2>
+      <p className="mb-4 text-xs text-[var(--ink-2)]">
+        Sponsored status-line ads shown in Claude Code / Codex while the agent works — Kickbacks.ai
+        pays out 50% of ad revenue. Earnings from the Kickbacks API, converted USD→EUR with ECB daily
+        rates. Estimated and pre-finalization.
+      </p>
+      {kbAll.length === 0 ? (
+        <Card className="text-sm">
+          No Kickbacks data yet. The <code>kickbacks-sync</code> GitHub Action in the data repo pulls
+          earnings into <code>data/kickbacks/&lt;YYYY-MM&gt;.json</code> once the{" "}
+          <code>KICKBACKS_GH_PAT</code> secret is set.
+        </Card>
+      ) : (
+        <>
+          <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Stat label="Kickbacks lifetime" value={eur(kbLifetimeReported)} />
+            <Stat label={latestKb ? `Latest day · ${fmtDay(latestKb.day)}` : "Latest day"} value={eur(latestKb?.earningsEur ?? 0)} />
+            <Stat label="This month" value={eur(kbThisMonth)} />
+            <Stat label="Share of total" value={rev.total > 0 ? pct(rev.kbShare) : "—"} />
+          </div>
+          <Card className="text-xs text-[var(--ink-2)]">
+            Kickbacks reports a running <strong>lifetime</strong> total (plus today) — it has no
+            per-day history like AdMob or the App Store — so the unified &quot;Total revenue&quot; above
+            counts the full reported lifetime (€ via ECB daily rates). The daily / this-month figures
+            reflect activity since this dashboard started syncing Kickbacks.
+          </Card>
+        </>
+      )}
+
+      {/* Monthly reporting supplements the full-period sections above. */}
+      <div className="mt-10 border-t border-[var(--chart-grid)] pt-8">
+        <MonthlyRevenueOverview revenue={revenue} months={availableMonths} />
+        <section aria-labelledby="apple-revenue-heading" className="mb-8">
+          <h2 id="apple-revenue-heading" className="text-xl font-semibold tracking-tight">Apple proceeds by app</h2>
+          <p className="mb-4 mt-1 text-xs text-[var(--ink-2)]">{monthLabel} · developer proceeds after Apple&apos;s commission · converted to EUR using report-day ECB rates</p>
+          {revenue.byApp.length > 0 ? (
+            <div className="glass mb-4 overflow-x-auto">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <caption className="sr-only">Apple proceeds by app for {monthLabel}</caption>
+                <thead className="border-b border-[var(--chart-grid)] text-xs text-[var(--ink-2)]"><tr>
+                  <th scope="col" className="px-5 py-3 font-medium">App</th>
+                  {["One-time", "Subscriptions", "Other / unclassified", "Total"].map((label) => <th scope="col" key={label} className="px-4 py-3 text-right font-medium">{label}</th>)}
+                </tr></thead>
+                <tbody className="divide-y divide-[var(--chart-grid)]">
+                  {revenue.byApp.map((app) => <tr key={app.appId} className="hover:bg-white/30">
+                    <th scope="row" className="px-5 py-4 font-medium">{app.name}</th>
+                    <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : monthlyEur(app.oneTime)}</td>
+                    <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : monthlyEur(app.subscriptions)}</td>
+                    <td className="num px-4 py-4 text-right text-[var(--ink-2)]">{monthlyEur(app.otherApple + app.unclassifiedApple)}</td>
+                    <td className="num px-4 py-4 text-right font-semibold">{monthlyEur(app.total)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          ) : <Card className="text-sm text-[var(--ink-2)]">No Apple proceeds are available for this month. Reports normally arrive after the sale date.</Card>}
+        </section>
+        <ActiveSubscriptions snapshot={snapshot} />
+      </div>
     </main>
   );
 }
