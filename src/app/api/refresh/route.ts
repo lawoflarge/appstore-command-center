@@ -22,8 +22,8 @@ export async function POST(req: Request): Promise<Response> {
   const phase = (body as { phase?: string }).phase;
 
   if (phase === "start") {
-    const { appIds, admob } = await runRefreshStart();
-    return NextResponse.json({ ok: true, appIds, admob });
+    const { appIds, admob, subscriptions } = await runRefreshStart();
+    return NextResponse.json({ ok: true, appIds, admob, subscriptions });
   }
   if (phase === "collect") {
     const raw = (body as { appIds?: unknown }).appIds;

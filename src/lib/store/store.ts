@@ -94,10 +94,13 @@ export function makeStore(gh: GhBackend, opts: { cacheReads?: boolean } = {}) {
       const r = await readRaw<T>(path);
       return r ? r.value : fallback;
     },
-    async writeJson(path: string, value: unknown, message: string): Promise<void> {
+    async writeJson<T>(
+      path: string, value: T, message: string,
+      merge?: (previous: T | null, incoming: T) => T,
+    ): Promise<void> {
       await retryOn409(async () => {
-        const existing = await gh.get(path);
-        await gh.put(path, value, existing?.sha ?? null, message);
+        const existing = await gh.get<T>(path);
+        await gh.put(path, merge ? merge(existing?.value ?? null, value) : value, existing?.sha ?? null, message);
       });
       dropCaches(path);
     },

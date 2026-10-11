@@ -2,18 +2,22 @@ import { Nav } from "@/components/glass/Nav";
 import { Stat } from "@/components/glass/Stat";
 import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
-import { admobPath, kickbacksPath, salesPath, appMetaPath, type SalesDay, type AppMeta, type KickbacksDay } from "@/lib/store/paths";
+import { admobPath, kickbacksPath, salesPath, appMetaPath, subscriptionsPath, admobCoveragePath, type AdMobReportCoverage, type SalesDay, type AppMeta, type KickbacksDay, type SubscriptionSnapshot } from "@/lib/store/paths";
 import type { AdMobRow } from "@/lib/sources/admob";
-import { todayUtc, rowsInMonth, addDays } from "@/lib/dates";
+import { rowsInMonth, addDays } from "@/lib/dates";
 import { visibleAppIds } from "@/lib/aggregate/api";
 import { buildRevenue, buildIapBreakdown } from "@/lib/aggregate/revenue";
+import { buildMonthlyRevenue } from "@/lib/aggregate/revenue-monthly";
 import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/revenue/RevenueCharts";
 import { IapCharts } from "@/components/revenue/IapCharts";
+import { MonthlyRevenueOverview } from "@/components/revenue/MonthlyRevenueOverview";
+import { ActiveSubscriptions } from "@/components/revenue/ActiveSubscriptions";
 
 export const dynamic = "force-dynamic";
 
 const CURRENCY = "EUR";
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const monthlyEur = (n: number) => new Intl.NumberFormat("en-IE", { style: "currency", currency: CURRENCY }).format(n);
 
 interface Acc { earnings: number; impressions: number; requests: number; clicks: number }
 const emptyAcc = (): Acc => ({ earnings: 0, impressions: 0, requests: 0, clicks: 0 });
@@ -50,32 +54,43 @@ function fmtDay(iso: string): string {
   return y && m && d ? `${d} ${MONTHS[m - 1]}` : iso;
 }
 
-export default async function Revenue() {
+export default async function Revenue({ searchParams }: { searchParams?: Promise<{ month?: string | string[] }> }) {
   const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
-  const now = todayUtc();
+  const currentTime = new Date();
+  const now = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(currentTime);
   const curMonth = now.slice(0, 7);
   const months = lastMonths(curMonth, 18);
-  const arrays = await Promise.all(
-    months.map((m) => store.readJson<AdMobRow[]>(admobPath(`${m}-01`), [])),
-  );
-  const all = arrays.flat();
-
-  // Kickbacks.ai earnings (account-wide, one row per day, already EUR-converted by the collector).
-  const kbArrays = await Promise.all(
-    months.map((m) => store.readJson<KickbacksDay[]>(kickbacksPath(`${m}-01`), [])),
-  );
-  const kbAll = kbArrays.flat().sort((a, b) => a.day.localeCompare(b.day));
-
-  // App Store proceeds (IAP / subscriptions) per visible app — month-filtered so Apple's rolling
-  // analytics window can't spill a prior month's day into the current file and double-count. Feeds
-  // both the unified revenue view (merged with AdMob) and the per-app/per-day IAP breakdown.
-  const ids = await visibleAppIds(store);
+  const [arrays, kbArrays, ids, snapshot, adCoverage] = await Promise.all([
+    Promise.all(months.map((m) => store.readJson<AdMobRow[]>(admobPath(`${m}-01`), []))),
+    Promise.all(months.map((m) => store.readJson<KickbacksDay[]>(kickbacksPath(`${m}-01`), []))),
+    visibleAppIds(store),
+    store.readJson<SubscriptionSnapshot | null>(subscriptionsPath(), null),
+    store.readJson<AdMobReportCoverage | null>(admobCoveragePath(), null),
+  ]);
+  const all = arrays.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
+  const kbAll = kbArrays.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)).sort((a, b) => a.day.localeCompare(b.day));
   const appSales = await Promise.all(ids.map(async (id) => {
-    const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
-    const perMonth = await Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), [])));
-    const sales = perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
-    return { appId: id, name: meta?.name ?? id, sales };
+    const [meta, perMonth] = await Promise.all([
+      store.readJson<AppMeta | null>(appMetaPath(id), null),
+      Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
+    ]);
+    return { appId: id, name: meta?.name ?? id, sales: perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)) };
   }));
+  const availableMonths = [...new Set([
+    curMonth, ...all.map((row) => row.day.slice(0, 7)), ...kbAll.map((row) => row.day.slice(0, 7)),
+    ...appSales.flatMap((app) => app.sales.map((row) => row.day.slice(0, 7))),
+  ])].filter((month) => months.includes(month)).sort().reverse();
+  const requestedMonth = (await searchParams)?.month;
+  const month = typeof requestedMonth === "string" && availableMonths.includes(requestedMonth) ? requestedMonth : curMonth;
+  const monthLabel = new Date(`${month}-01T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  const reportingTimeZone = adCoverage?.reportingTimeZone ?? [...all].sort((a, b) => b.day.localeCompare(a.day)).find((row) => row.reportingTimeZone)?.reportingTimeZone;
+  let admobToday: string | null = null;
+  if (reportingTimeZone) {
+    try {
+      admobToday = new Intl.DateTimeFormat("en-CA", { timeZone: reportingTimeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(currentTime);
+    } catch { /* An unknown report timezone cannot support a complete-day forecast. */ }
+  }
+  const revenue = buildMonthlyRevenue(appSales, all, month, now, admobToday, adCoverage);
   const rev = buildRevenue(all, appSales.flatMap((a) => a.sales), kbAll);
   const iap = buildIapBreakdown(appSales);
 
@@ -110,16 +125,11 @@ export default async function Revenue() {
     .sort((a, b) => b.earnings - a.earnings);
 
   const thisMonth = monMap.get(curMonth)?.earnings ?? 0;
-  // AdMob "today" is almost always 0 — estimates lag a few hours, and the OAuth refresh token
-  // expires silently (Google revokes them after 7 days while the consent screen is in "Testing"),
-  // which freezes the data. Show the latest day we actually have + flag staleness, not a misleading 0.
-  const admobDays = [...dayMap.keys()].sort();
-  const latestAdmobDay = admobDays.at(-1) ?? "";
-  const latestAdmobEarnings = latestAdmobDay ? dayMap.get(latestAdmobDay)!.earnings : 0;
-  // AdMob estimates settle within hours, so the freshest day should be today or yesterday. If the
-  // newest day we have is older than yesterday, collection has been failing (typically the expired
-  // token) — flag it. (today 07, newest 05 → 05 < 06 → stale.)
-  const admobStale = latestAdmobDay !== "" && latestAdmobDay < addDays(now, -1);
+  // Coverage also records zero-earning days; freshness follows the provider's report timezone.
+  const latestAdmobDay = [adCoverage?.endDay, ...all.map((row) => row.day)].filter((day): day is string => Boolean(day)).sort().at(-1) ?? "";
+  const latestAdmobEarnings = dayMap.get(latestAdmobDay)?.earnings ?? 0;
+  const completeAdmobDay = adCoverage?.completeThroughDay ?? latestAdmobDay;
+  const admobStale = completeAdmobDay !== "" && completeAdmobDay < addDays(admobToday ?? now, -1);
   const ecpm = life.impressions > 0 ? (life.earnings / life.impressions) * 1000 : 0;
   const eur = (n: number) => `${n.toFixed(2)} ${CURRENCY}`;
 
@@ -136,7 +146,7 @@ export default async function Revenue() {
       </p>
 
       {/* Unified revenue: ads + in-app/subscriptions */}
-      <section className="mb-6">
+      <section aria-label="All-time revenue" className="mb-6">
         <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <Stat label="Total revenue" value={eur(rev.total)} />
           <Stat label="Ad revenue" value={eur(rev.adEarnings)} />
@@ -183,11 +193,8 @@ export default async function Revenue() {
 
       {admobStale && (
         <Card className="mb-4 border border-[var(--bad,#c0392b)] text-sm">
-          ⚠ AdMob earnings haven&apos;t updated since <strong>{fmtDay(latestAdmobDay)}</strong> — the
-          data is stale. The OAuth refresh token has most likely expired (Google revokes them after
-          7&nbsp;days while the consent screen is in &quot;Testing&quot;). Renew it via{" "}
-          <code>admob-oauth.mjs</code>, then update <code>ADMOB_REFRESH_TOKEN</code> in Vercel and{" "}
-          <code>.env.local</code>; publish the OAuth consent screen to stop the 7-day expiry.
+          AdMob reports have not updated since <strong>{fmtDay(latestAdmobDay)}</strong>.
+          New earnings may be missing; the latest collection needs attention.
         </Card>
       )}
 
@@ -244,6 +251,36 @@ export default async function Revenue() {
           </Card>
         </>
       )}
+
+      {/* Monthly reporting supplements the full-period sections above. */}
+      <div className="mt-10 border-t border-[var(--chart-grid)] pt-8">
+        <MonthlyRevenueOverview revenue={revenue} months={availableMonths} />
+        <section aria-labelledby="apple-revenue-heading" className="mb-8">
+          <h2 id="apple-revenue-heading" className="text-xl font-semibold tracking-tight">Apple proceeds by app</h2>
+          <p className="mb-4 mt-1 text-xs text-[var(--ink-2)]">{monthLabel} · developer proceeds after Apple&apos;s commission · converted to EUR using report-day ECB rates</p>
+          {revenue.byApp.length > 0 ? (
+            <div className="glass mb-4 overflow-x-auto">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <caption className="sr-only">Apple proceeds by app for {monthLabel}</caption>
+                <thead className="border-b border-[var(--chart-grid)] text-xs text-[var(--ink-2)]"><tr>
+                  <th scope="col" className="px-5 py-3 font-medium">App</th>
+                  {["One-time", "Subscriptions", "Other / unclassified", "Total"].map((label) => <th scope="col" key={label} className="px-4 py-3 text-right font-medium">{label}</th>)}
+                </tr></thead>
+                <tbody className="divide-y divide-[var(--chart-grid)]">
+                  {revenue.byApp.map((app) => <tr key={app.appId} className="hover:bg-white/30">
+                    <th scope="row" className="px-5 py-4 font-medium">{app.name}</th>
+                    <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : monthlyEur(app.oneTime)}</td>
+                    <td className="num px-4 py-4 text-right">{!app.classificationComplete ? "Unclassified" : monthlyEur(app.subscriptions)}</td>
+                    <td className="num px-4 py-4 text-right text-[var(--ink-2)]">{monthlyEur(app.otherApple + app.unclassifiedApple)}</td>
+                    <td className="num px-4 py-4 text-right font-semibold">{monthlyEur(app.total)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          ) : <Card className="text-sm text-[var(--ink-2)]">No Apple proceeds are available for this month. Reports normally arrive after the sale date.</Card>}
+        </section>
+        <ActiveSubscriptions snapshot={snapshot} />
+      </div>
     </main>
   );
 }

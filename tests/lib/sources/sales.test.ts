@@ -1,7 +1,7 @@
 import { test, expect, describe, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseTsv } from "@/lib/asc/client";
-import { collectSales, collectSalesWindow } from "@/lib/sources/sales";
+import { collectSales, collectSalesWindow, parseSalesRows, convertSalesDayToEur } from "@/lib/sources/sales";
 
 const tsv = readFileSync(__dirname + "/../../fixtures/sales-2026-05-18.tsv", "utf8");
 
@@ -18,8 +18,59 @@ test("collectSales aggregates units per app/day/country", async () => {
     redownloads: 1,
     proceedsUsd: 0,
     proceedsByCcy: {}, // free app, no proceeds → empty currency bucket
+    proceedsByType: { oneTime: {}, subscription: {}, other: {} },
+    otherProductTypes: [], reportAvailable: true, collectedAt: expect.any(String),
   });
   expect(rows["6480000000"]).toBeUndefined();
+});
+
+describe("sales revenue classification and coverage", () => {
+  const apps = [{ appId: "100", sku: "sample-app" }, { appId: "200", sku: "quiet-app" }];
+  const sale = (type: string, units: string, proceeds: string, currency = "EUR") => ({
+    "Apple Identifier": "101", "SKU": "sample-product", "Units": units,
+    "Country Code": "DE", "Product Type Identifier": type, "Developer Proceeds": proceeds,
+    "Parent Identifier": "sample-app", "Currency of Proceeds": currency,
+  });
+
+  it("separates IA1, IAY and unknown types while retaining refunds and currency", () => {
+    const out = parseSalesRows([
+      sale("IA1", "2", "3", "EUR"), sale("IA1", "-1", "3", "EUR"),
+      sale("IAY", "3", "4", "USD"), sale("OTHER_NEW_TYPE", "1", "2", "GBP"),
+    ], apps, "2026-10-08", "2026-10-10T12:00:00Z");
+    expect(out["100"].proceedsByType).toEqual({ oneTime: { EUR: 3 }, subscription: { USD: 12 }, other: { GBP: 2 } });
+    expect(out["100"].otherProductTypes).toEqual(["OTHER_NEW_TYPE"]);
+    expect(out["100"].proceedsByCcy).toEqual({ EUR: 3, USD: 12, GBP: 2 });
+    convertSalesDayToEur(out["100"], { USD: 2, GBP: 2 });
+    expect(out["100"].proceedsEurByType).toEqual({ oneTime: 3, subscription: 6, other: 1 });
+    expect(out["100"].proceedsEur).toBe(10);
+  });
+
+  it("advances a zero-sale app only when an account report is actually available", () => {
+    const out = parseSalesRows([sale("IA1", "1", "3")], apps, "2026-10-08", "2026-10-10T12:00:00Z");
+    convertSalesDayToEur(out["200"], {});
+    expect(out["200"]).toMatchObject({ reportAvailable: true, collectedAt: "2026-10-10T12:00:00Z", proceedsEur: 0, proceedsEurByType: { oneTime: 0, subscription: 0, other: 0 } });
+    expect(parseSalesRows([], apps, "2026-10-09")).toEqual({});
+  });
+
+  it("keeps rounding cents reconciled to the total", () => {
+    const s = parseSalesRows([sale("IA1", "1", "1", "USD"), sale("IAY", "1", "1", "USD")], apps, "2026-10-08")["100"];
+    convertSalesDayToEur(s, { USD: 3 });
+    expect(s.proceedsEur).toBe(0.67);
+    expect(s.proceedsEurByType).toEqual({ oneTime: 0.34, subscription: 0.33, other: 0 });
+  });
+
+  it("does not present a partial currency map as fully classified EUR revenue", () => {
+    const s = parseSalesRows([sale("IA1", "1", "3"), sale("IAY", "1", "4", "")], apps, "2026-10-08")["100"];
+    convertSalesDayToEur(s, {});
+    expect(s.proceedsCurrencyMissing).toBe(true);
+    expect(s.proceedsEurByType).toBeUndefined();
+    expect(s.proceedsEur).toBeUndefined();
+  });
+
+  it("rejects invalid report shapes and fractional unit counts", () => {
+    expect(() => parseSalesRows([{ error: "upstream response" }], apps, "2026-10-08")).toThrow("columns");
+    expect(() => parseSalesRows([sale("IA1", "1.5", "3")], apps, "2026-10-08")).toThrow("invalid amounts");
+  });
 });
 
 // Real-world shape (NetGuard, 2026-06-02): the app is a free download (Product Type "1",

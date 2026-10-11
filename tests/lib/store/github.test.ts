@@ -19,7 +19,7 @@ test("ghGetJson decodes base64 content", async () => {
 });
 
 test("ghPutJson sends sha when updating", async () => {
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+  const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({}), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   await ghPutJson(cfg, "data/x.json", { a: 2 }, "oldsha", "msg");
   const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
@@ -42,7 +42,7 @@ test("ghGetJson decodes newline-wrapped base64 (GitHub style)", async () => {
 });
 
 test("ghPutJson omits sha on create (sha=null)", async () => {
-  const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+  const fetchMock = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   await ghPutJson(cfg, "data/x.json", { a: 1 }, null, "msg");
   const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
@@ -74,7 +74,7 @@ test("ghGetJson re-fetches raw when the Contents API omits content (>1MB file)",
 });
 
 test("ghGetJson does not raw re-fetch a genuinely empty file (size 0) — parse throws as before", async () => {
-  const fetchMock = vi.fn(async () =>
+  const fetchMock = vi.fn<typeof fetch>(async () =>
     new Response(JSON.stringify({ content: "", size: 0, sha: "s1" }), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   await expect(ghGetJson(cfg, "data/x.json")).rejects.toThrow();

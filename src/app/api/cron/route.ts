@@ -33,8 +33,8 @@ export async function GET(req: Request): Promise<Response> {
     const override = url.searchParams.get("batch");
     const runIndex = override !== null ? Number(override) : Math.floor(Date.now() / TICK_MS);
     const batch = selectRoundRobinBatch(appIds, batchSize, runIndex);
-    const { status, admob } = await runCronBatch(batch);
-    return NextResponse.json({ ok: true, batch, batchOf: appIds.length, status, admob });
+    const { status, admob, subscriptions } = await runCronBatch(batch);
+    return NextResponse.json({ ok: true, batch, batchOf: appIds.length, status, admob, subscriptions });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error }, { status: 500 });

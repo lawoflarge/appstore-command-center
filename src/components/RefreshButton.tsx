@@ -44,6 +44,9 @@ export function RefreshButton() {
       }
       setStage("Finishing…");
       await post({ phase: "finish" });
+      if (start.subscriptions && !start.subscriptions.ok) {
+        setErr("Subscription report could not be refreshed. The last available snapshot is still shown.");
+      }
       startTransition(() => router.refresh());
     } catch (e) {
       setErr(e instanceof Error ? e.message : "refresh failed");
