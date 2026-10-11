@@ -1,5 +1,6 @@
-import type { SalesDay } from "@/lib/store/paths";
+import type { SalesDay, SalesProceedsType } from "@/lib/store/paths";
 import { addDays } from "@/lib/dates";
+import { toEur, type EurRates } from "@/lib/fx";
 
 export type FetchSalesTsv = (day: string) => Promise<Record<string, string>[]>;
 export interface SalesAppRef { appId: string; sku: string }
@@ -10,6 +11,24 @@ export async function collectSales(
   fetchTsv: FetchSalesTsv, apps: SalesAppRef[], day: string,
 ): Promise<Record<string, SalesDay>> {
   const rows = await fetchTsv(day);
+  return parseSalesRows(rows, apps, day);
+}
+
+export function parseSalesRows(
+  rows: Record<string, string>[], apps: SalesAppRef[], day: string,
+  collectedAt = new Date().toISOString(),
+): Record<string, SalesDay> {
+  // An unavailable report is not proof of zero sales. Do not advance coverage for it.
+  if (!rows.length) return {};
+  for (const r of rows) {
+    if (!["Apple Identifier", "Units", "Developer Proceeds", "Product Type Identifier"].every((k) => k in r)) {
+      throw new Error("Sales report is missing required columns");
+    }
+    if (!/^-?\d+$/.test(r["Units"].trim()) || !Number.isSafeInteger(Number(r["Units"])) ||
+      !r["Developer Proceeds"].trim() || !Number.isFinite(Number(r["Developer Proceeds"]))) {
+      throw new Error("Sales report contains invalid amounts");
+    }
+  }
   const want = new Set(apps.map((a) => a.appId));
   // IAP / subscription proceeds are reported under the product's OWN Apple Identifier, not the
   // app's, and link back to the app via Parent Identifier = the app's SKU. Map SKU→appId so those
@@ -25,14 +44,27 @@ export async function collectSales(
 
   const acc: Record<string, SalesDay> = {};
   const ensure = (appId: string) =>
-    (acc[appId] ??= { day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd: 0, proceedsByCcy: {} });
+    (acc[appId] ??= {
+      day, byCountry: {}, total: 0, redownloads: 0, proceedsUsd: 0, proceedsByCcy: {},
+      proceedsByType: { oneTime: {}, subscription: {}, other: {} }, otherProductTypes: [],
+      reportAvailable: true, collectedAt,
+    });
+  apps.forEach((app) => ensure(app.appId));
   // Apple reports "Developer Proceeds" in each sale's own "Currency of Proceeds" (EUR/GBP/BRL/…).
   // Keep the raw lump in proceedsUsd (legacy) but ALSO bucket it by currency so lib/fx can convert
   // to one EUR figure — summing the raw numbers across currencies overstated revenue (an 18.49 BRL
   // sale was counted as 18.49 €). Skip empties so a free app's SalesDay keeps an empty {}.
-  const addCcy = (s: SalesDay, amount: number, ccy: string) => {
-    if (!amount || !ccy) return;
-    (s.proceedsByCcy ??= {})[ccy] = (s.proceedsByCcy[ccy] ?? 0) + amount;
+  const addProceeds = (s: SalesDay, amount: number, ccy: string, productType: string) => {
+    if (!amount) return;
+    s.proceedsUsd += amount;
+    const type: SalesProceedsType = productType === "IA1" ? "oneTime" : productType === "IAY" ? "subscription" : "other";
+    if (type === "other" && !s.otherProductTypes!.includes(productType || "UNKNOWN")) {
+      s.otherProductTypes!.push(productType || "UNKNOWN");
+    }
+    if (!ccy) { s.proceedsCurrencyMissing = true; return; }
+    s.proceedsByCcy![ccy] = (s.proceedsByCcy![ccy] ?? 0) + amount;
+    const bucket = s.proceedsByType![type];
+    bucket[ccy] = (bucket[ccy] ?? 0) + amount;
   };
 
   for (const r of rows) {
@@ -40,8 +72,8 @@ export async function collectSales(
     const units = parseInt(r["Units"] || "0", 10);
     const proceeds = parseFloat(r["Developer Proceeds"] || "0") || 0;
     const ccy = (r["Currency of Proceeds"] || "").trim();
+    const ptype = (r["Product Type Identifier"] || "").trim();
     if (want.has(appId)) {
-      const ptype = (r["Product Type Identifier"] || "").trim();
       const s = ensure(appId);
       if (DOWNLOAD.has(ptype)) {
         s.byCountry[r["Country Code"]] = (s.byCountry[r["Country Code"]] ?? 0) + units;
@@ -49,15 +81,33 @@ export async function collectSales(
       } else if (REDOWNLOAD.has(ptype)) {
         s.redownloads += units;
       }
-      s.proceedsUsd += proceeds * units;
-      addCcy(s, proceeds * units, ccy);
+      addProceeds(s, proceeds * units, ccy, ptype);
     } else if (proceeds) {
       // An IAP / subscription row — credit its proceeds to the parent app it belongs to.
       const parent = skuToApp.get((r["Parent Identifier"] || "").trim());
-      if (parent) { const s = ensure(parent); s.proceedsUsd += proceeds * units; addCcy(s, proceeds * units, ccy); }
+      if (parent) addProceeds(ensure(parent), proceeds * units, ccy, ptype);
     }
   }
   return acc;
+}
+
+// Use the same daily FX rates for total and categories. Assign the possible rounding cent to
+// the largest category so the displayed split exactly reconciles to the existing total.
+export function convertSalesDayToEur(s: SalesDay, rates: EurRates): void {
+  if (s.proceedsCurrencyMissing) return;
+  if (!Object.keys(s.proceedsByCcy ?? {}).length && s.proceedsUsd !== 0) return;
+  s.proceedsEur = toEur(s.proceedsByCcy, rates);
+  if (!s.proceedsByType) return;
+  const split = {
+    oneTime: toEur(s.proceedsByType.oneTime, rates),
+    subscription: toEur(s.proceedsByType.subscription, rates),
+    other: toEur(s.proceedsByType.other, rates),
+  };
+  const keys: SalesProceedsType[] = ["oneTime", "subscription", "other"];
+  const largest = keys.reduce((a, b) => Math.abs(split[a]) >= Math.abs(split[b]) ? a : b);
+  const residual = Math.round((s.proceedsEur - keys.reduce((n, k) => n + split[k], 0)) * 100) / 100;
+  split[largest] = Math.round((split[largest] + residual) * 100) / 100;
+  s.proceedsEurByType = split;
 }
 
 // Apple publishes a DAILY sales report ~24-48h after the day (longer over weekends), and a fresh

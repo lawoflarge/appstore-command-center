@@ -1,8 +1,8 @@
 import { test, expect } from "vitest";
 import { downloadsSeries, totals, analyticsTotals } from "@/lib/aggregate/downloads";
-import type { AnalyticsDay } from "@/lib/store/paths";
+import type { AnalyticsDay, SalesDay } from "@/lib/store/paths";
 
-const sales = [
+const sales: SalesDay[] = [
   { day: "2026-05-17", byCountry: { DE: 5 }, total: 5, redownloads: 0, proceedsUsd: 0 },
   { day: "2026-05-18", byCountry: { DE: 7, US: 1 }, total: 8, redownloads: 0, proceedsUsd: 0 },
 ];

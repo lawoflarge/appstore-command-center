@@ -116,9 +116,9 @@ test("runIntelligence failure is isolated, recorded, and blocks lastSuccess", as
 test("a store write failure is isolated and does not crash the whole run", async () => {
   const store = memStore();
   const realUpsert = store.upsertDailyArray;
-  store.upsertDailyArray = vi.fn(async (p: string, rows: any[], msg?: string) => {
+  store.upsertDailyArray = vi.fn(async (p: string, rows: any[]) => {
     if (p.includes("/analytics/")) throw new Error("GH PUT 500 analytics");
-    return realUpsert(p, rows, msg);
+    return realUpsert(p, rows);
   });
   const aDay = { day: "2026-05-18", impressions: 10, pageViews: 5, downloads: 2, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: {} };
   const status = await runDailyCollection({

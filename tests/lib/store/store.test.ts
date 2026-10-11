@@ -42,6 +42,23 @@ test("writeJson passes null sha on create then the existing sha on update", asyn
   expect(gh.fs.get("data/c.json")!.value).toEqual({ a: 2 });
 });
 
+test("writeJson re-runs its merge against a newer value after a concurrent 409", async () => {
+  const gh = fakeGh();
+  const path = "data/subscriptions/latest.json";
+  gh.fs.set(path, { value: { reportDate: "2026-10-07", count: 2 }, sha: "old" });
+  const originalPut = gh.put.getMockImplementation()!;
+  gh.put.mockImplementationOnce(async () => {
+    gh.fs.set(path, { value: { reportDate: "2026-10-09", count: 7 }, sha: "concurrent" });
+    throw new Error("GH PUT 409 conflict");
+  }).mockImplementation(originalPut);
+  const merge = vi.fn((previous: { reportDate: string; count: number } | null, incoming: { reportDate: string; count: number }) =>
+    previous && previous.reportDate > incoming.reportDate ? previous : incoming);
+  await makeStore(gh as any).writeJson(path, { reportDate: "2026-10-08", count: 3 }, "update", merge);
+  expect(merge).toHaveBeenCalledTimes(2);
+  expect(gh.put.mock.calls[1][2]).toBe("concurrent");
+  expect(gh.fs.get(path)!.value).toEqual({ reportDate: "2026-10-09", count: 7 });
+});
+
 // --- Snapshot reads -----------------------------------------------------------
 // A page render used to bill one Contents-API request per file (~700 for the glance
 // page), which exhausted GitHub's hourly quota after a handful of reloads and threw.

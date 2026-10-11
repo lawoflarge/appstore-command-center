@@ -12,6 +12,8 @@ export const configPath = () => `data/config.json`;
 export const insightsPath = () => `data/insights.json`;
 export const dashboardsPath = () => `data/dashboards.json`;
 export const runStatusPath = () => `data/run-status.json`;
+export const subscriptionsPath = () => `data/subscriptions/latest.json`;
+export const admobCoveragePath = () => `data/admob/report-coverage.json`;
 
 export interface DailyMetric { day: string; [k: string]: string | number; }
 // proceedsUsd is the LEGACY field: a raw sum of Apple's "Developer Proceeds" across mixed
@@ -19,7 +21,46 @@ export interface DailyMetric { day: string; [k: string]: string | number; }
 // split by their reported "Currency of Proceeds"; proceedsEur is that map converted to EUR with
 // ECB rates (see lib/fx.ts). Readers prefer proceedsEur and fall back to proceedsUsd for rows
 // collected before the FX fix / backfill.
-export interface SalesDay { day: string; byCountry: Record<string, number>; total: number; redownloads: number; proceedsUsd: number; proceedsByCcy?: Record<string, number>; proceedsEur?: number; }
+export type SalesProceedsType = "oneTime" | "subscription" | "other";
+export interface SalesDay {
+  day: string; byCountry: Record<string, number>; total: number; redownloads: number;
+  proceedsUsd: number; proceedsByCcy?: Record<string, number>; proceedsEur?: number;
+  // Absent on legacy rows: missing classification is unknown, not zero subscription revenue.
+  proceedsByType?: Record<SalesProceedsType, Record<string, number>>;
+  proceedsEurByType?: Record<SalesProceedsType, number>;
+  otherProductTypes?: string[];
+  proceedsCurrencyMissing?: true;
+  // True only after a nonempty, valid account-wide SALES report was parsed. Zero-sale apps
+  // receive an explicit zero row from that report so freshness is not the last purchase date.
+  reportAvailable?: true;
+  collectedAt?: string;
+}
+export interface SubscriptionCounts {
+  standardPrice: number;
+  freeTrial: number;
+  paidOffer: number;
+  marketingOptIn: number;
+  gracePeriod: number;
+  billingRetry: number;
+}
+export interface SubscriptionProduct {
+  appName: string; appAppleId: string; subscriptionName: string; subscriptionAppleId: string;
+  subscriptionGroupId: string; duration: string; counts: SubscriptionCounts;
+}
+export interface SubscriptionSnapshot {
+  reportDate: string;
+  collectedAt: string;
+  source: "SUBSCRIPTION/SUMMARY 1_3";
+  products: SubscriptionProduct[];
+}
+export interface AdMobReportCoverage {
+  startDay: string;
+  endDay: string;
+  completeThroughDay: string;
+  reportingTimeZone: string;
+  currencyCode: string;
+  collectedAt: string;
+}
 // Kickbacks.ai earnings (AI wait-time sponsored status-line ads). Account-wide like AdMob, one
 // row per day. earningsUsd/lifetimeUsd come from the Kickbacks API; earningsEur/lifetimeEur are
 // the ECB-converted (lib/fx) values written by the data repo's kickbacks-sync collector.

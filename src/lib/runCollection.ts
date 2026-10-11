@@ -4,22 +4,24 @@ import { makeStore, ghBackendFromEnv, type Store } from "@/lib/store/store";
 import { runDailyCollection, type OrchestratorDeps } from "@/lib/orchestrator";
 import { ascKeyFromEnv, type AscKey } from "@/lib/asc/jwt";
 import { discoverApps, ascFetchApps } from "@/lib/sources/apps";
-import { collectSalesWindow, ascFetchSalesTsv } from "@/lib/sources/sales";
+import { collectSalesWindow, ascFetchSalesTsv, convertSalesDayToEur } from "@/lib/sources/sales";
+import { ascFetchSubscriptionsTsv, collectSubscriptionsInto, type SubscriptionsResult } from "@/lib/sources/subscriptions";
 import { parseAnalyticsGroups, ensureOngoingRequest } from "@/lib/sources/analytics";
 import { listOngoingRequests, createOngoingRequest, fetchLatestAnalyticsCsv } from "@/lib/sources/asc-live";
 import { mapReviews, ascFetchReviews } from "@/lib/sources/reviews";
 import { collectRatings } from "@/lib/sources/ratings";
 import { collectKeywordRanks } from "@/lib/sources/keywords";
 import { runIntelligence } from "@/lib/intelligence/engine";
-import { configPath, admobPath, type Config, type RunStatus } from "@/lib/store/paths";
-import { admobConfigured, collectAdmob, type AdMobRow } from "@/lib/sources/admob";
-import { fetchEurRates, toEur, type EurRates } from "@/lib/fx";
+import { configPath, admobPath, admobCoveragePath, type Config, type RunStatus, type AdMobReportCoverage } from "@/lib/store/paths";
+import { admobConfigured, collectAdmobReport, type AdMobRow } from "@/lib/sources/admob";
+import { fetchEurRates, type EurRates } from "@/lib/fx";
 
 export type AdmobResult = { ok: boolean; rows?: number; error?: string };
 
 export interface CollectionResult {
   status: RunStatus;
   admob: AdmobResult;
+  subscriptions: SubscriptionsResult;
 }
 
 // The five per-app collectors + discovery + intelligence, wired to the live ASC client.
@@ -44,7 +46,7 @@ function makeDeps(e: Env, key: AscKey, config: Config): OrchestratorDeps {
         [...new Set(withProceeds.map((sd) => sd.day))]
           .map(async (d) => [d, await fetchEurRates(d).catch(() => ({} as EurRates))] as const),
       ));
-      for (const sd of withProceeds) sd.proceedsEur = toEur(sd.proceedsByCcy!, ratesByDay.get(sd.day)!);
+      for (const sd of Object.values(byApp).flat()) convertSalesDayToEur(sd, ratesByDay.get(sd.day) ?? {});
       return byApp;
     },
     collectAnalytics: async (appId) => {
@@ -69,7 +71,7 @@ async function collectAdmobInto(e: Env, store: Store, day: string): Promise<Admo
   try {
     const start = new Date(`${day}T00:00:00Z`);
     start.setUTCDate(start.getUTCDate() - 92);
-    const rows = await collectAdmob(e, start.toISOString().slice(0, 10), day);
+    const { rows, coverage } = await collectAdmobReport(e, start.toISOString().slice(0, 10), day);
     const byMonth = new Map<string, AdMobRow[]>();
     for (const r of rows) {
       const m = r.day.slice(0, 7);
@@ -83,6 +85,10 @@ async function collectAdmobInto(e: Env, store: Store, day: string): Promise<Admo
         (r) => `${r.day}|${r.appId}|${r.adUnit}`, `data: admob ${m}`,
       );
     }
+    // Mark coverage only after every row write succeeded. Do not advance the forecast's
+    // denominator if part of this account-wide report failed to persist.
+    await store.writeJson<AdMobReportCoverage>(admobCoveragePath(), coverage, "data: AdMob report coverage",
+      (previous, incoming) => previous && previous.collectedAt > incoming.collectedAt ? previous : incoming);
     return { ok: true, rows: rows.length };
   } catch (err) {
     return { ok: false, error: String(err instanceof Error ? err.message : err) };
@@ -106,11 +112,14 @@ export async function discoverAppIds(): Promise<string[]> {
 
 // Phase 1: cheap account-wide work the user most wants fresh on a manual refresh — AdMob is
 // near-real-time. Returns the app list so the client can drive the per-app batches.
-export async function runRefreshStart(): Promise<{ appIds: string[]; admob: AdmobResult }> {
+export async function runRefreshStart(): Promise<{ appIds: string[]; admob: AdmobResult; subscriptions: SubscriptionsResult }> {
   const { e, key, store, day } = setup();
-  const apps = await discoverApps(ascFetchApps(key), day);
-  const admob = await collectAdmobInto(e, store, day);
-  return { appIds: apps.map((a) => a.appId), admob };
+  const [apps, admob, subscriptions] = await Promise.all([
+    discoverApps(ascFetchApps(key), day),
+    collectAdmobInto(e, store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+  ]);
+  return { appIds: apps.map((a) => a.appId), admob, subscriptions };
 }
 
 // Phase 2: per-app collection for one batch. No intelligence (deferred to finish) so each call
@@ -133,9 +142,12 @@ export async function runFinish(): Promise<RunStatus> {
 export async function runCronBatch(appIds: string[]): Promise<CollectionResult> {
   const { e, key, store, day } = setup();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
-  const admob = await collectAdmobInto(e, store, day);
-  const status = await runDailyCollection({ day, store, deps: makeDeps(e, key, config), appIds, intelligence: true });
-  return { status, admob };
+  const [admob, subscriptions, status] = await Promise.all([
+    collectAdmobInto(e, store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+    runDailyCollection({ day, store, deps: makeDeps(e, key, config), appIds, intelligence: true }),
+  ]);
+  return { status, admob, subscriptions };
 }
 
 // Full collection — every app in one invocation. Kept for completeness / small portfolios, but
@@ -144,7 +156,10 @@ export async function runCronBatch(appIds: string[]): Promise<CollectionResult> 
 export async function runFullCollection(): Promise<CollectionResult> {
   const { e, key, store, day } = setup();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
-  const status = await runDailyCollection({ day, store, deps: makeDeps(e, key, config), intelligence: true });
-  const admob = await collectAdmobInto(e, store, day);
-  return { status, admob };
+  const [status, admob, subscriptions] = await Promise.all([
+    runDailyCollection({ day, store, deps: makeDeps(e, key, config), intelligence: true }),
+    collectAdmobInto(e, store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+  ]);
+  return { status, admob, subscriptions };
 }

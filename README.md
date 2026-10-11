@@ -14,7 +14,7 @@ App Store Connect's web UI is fine for one-off lookups and useless as a daily dr
 |------|-------------|
 | **Glance** | Latest-day downloads against one shared reference day (apps Apple hasn't published yet show **N/A**, never a stale number), this-month totals, blended rating, top anomaly per app |
 | **Portfolio** | Cross-app ranking by attention score (anomaly + rating delta + unresponded reviews) |
-| **Revenue** | Unified revenue (AdMob ad earnings + App Store in-app & subscription proceeds), with the in-app/subscription proceeds broken down **by app** and **by day**, plus AdMob by day/month/app/ad-unit |
+| **Revenue** | Month selection; one-time purchases, subscriptions and AdMob earnings in EUR; source-aware linear month-end estimates; Apple proceeds by app and day; latest active subscription counts. Kickbacks lifetime earnings remain separate. |
 | **App detail** | Daily sales sparkline, funnel, ratings trend, reviews list per app |
 | **ASO** | iTunes-Search rank tracker per watched keyword + country |
 | **Reviews** | Cross-app review feed, filterable by rating/territory/responded |
@@ -117,3 +117,13 @@ MIT: see [LICENSE](LICENSE).
 
 - Design spec: [`docs/superpowers/specs/2026-05-19-appstore-command-center-design.md`](docs/superpowers/specs/2026-05-19-appstore-command-center-design.md)
 - Implementation plan: [`docs/superpowers/plans/2026-05-19-appstore-command-center.md`](docs/superpowers/plans/2026-05-19-appstore-command-center.md)
+
+## Monthly revenue and subscriptions
+
+The Revenue page selects a calendar month through `?month=YYYY-MM`. Apple proceeds retain refunds and are classified from official product types (`IA1` one-time, `IAY` subscriptions); other paid types and unclassified history stay explicit. Missing reports or currency conversion are never silently treated as zero. Dates use the operator's Los Angeles timezone, while AdMob completeness follows its provider-reported timezone.
+
+Current-month estimates extend each source's average over confirmed elapsed calendar days to the full month. They exclude the source's incomplete current day. AdMob coverage comes from its validated report metadata, including days with no activity; an unverified source disables that forecast. These estimates are projections, not guaranteed revenue or ARR.
+
+Active subscriptions are a separate latest snapshot from Apple's `SUBSCRIPTION/SUMMARY` report. Standard-price subscriptions, paid offers, trials, grace periods, billing retry and marketing opt-in remain distinct. The figures count subscriptions per product, not identified people, and do not change when a historical revenue month is selected.
+
+The existing private data repository stores both classification and subscription snapshots. To enrich legacy sales records, `scripts/backfill-revenue.mjs` provides a read-only dry run by default. Supply an absolute private `--output` directory and existing environment configuration; review its summary and reconciliation exceptions before adding both `--write` and `--confirm-private-data-update`. The migration preserves stored monetary totals and unrelated fields, rechecks concurrent changes on write, and stops on unresolved exceptions. Raw reports and migration outputs must never be committed to this public code repository.

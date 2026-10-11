@@ -21,13 +21,14 @@ export interface Breakdown {
 const PALETTE = ["var(--accent)", "#7c9cff", "#5ec8a0", "#e0a458", "#d97aa6", "#8a8df0"];
 
 export function RevenueCharts({
-  daily, monthly, byApp, byAdUnit, currency,
+  daily, monthly, byApp, byAdUnit, currency, periodLabel = "lifetime",
 }: {
   daily: SeriesPoint[];
   monthly: SeriesPoint[];
   byApp: Breakdown[];
   byAdUnit: Breakdown[];
   currency: string;
+  periodLabel?: string;
 }) {
   const [gran, setGran] = useState<"daily" | "monthly">("daily");
   const series = gran === "daily" ? daily : monthly;
@@ -47,6 +48,7 @@ export function RevenueCharts({
           <button
             key={g}
             onClick={() => setGran(g)}
+            aria-pressed={gran === g}
             className={`rounded-xl px-3 py-1.5 text-sm capitalize ${
               gran === g ? "bg-[var(--accent)] text-white" : "glass hover:bg-white/50"
             }`}
@@ -110,7 +112,7 @@ export function RevenueCharts({
 
       {(byApp.length > 0 || byAdUnit.length > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
-          <Panel title="Earnings by app (lifetime)">
+          <Panel title={`Earnings by app (${periodLabel})`}>
             <ResponsiveContainer width="100%" height={Math.max(120, byApp.length * 44)}>
               <BarChart data={byApp} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 4 }}>
                 <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -123,7 +125,7 @@ export function RevenueCharts({
             </ResponsiveContainer>
           </Panel>
 
-          <Panel title="Earnings by ad unit (lifetime)">
+          <Panel title={`Earnings by ad unit (${periodLabel})`}>
             <ResponsiveContainer width="100%" height={Math.max(120, byAdUnit.length * 44)}>
               <BarChart data={byAdUnit} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 4 }}>
                 <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />

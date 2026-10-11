@@ -176,7 +176,7 @@ test("createOngoingRequest POSTs an ONGOING request and returns the new id", asy
   vi.resetModules();
   vi.doMock("@/lib/asc/jwt", () => ({ signAscToken: () => "tok" }));
   vi.doMock("@/lib/asc/client", () => ({ ascGetJson: vi.fn(), ascGetAllPages: vi.fn() }));
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: { id: "newreq" } }), { status: 201 }));
+  const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: { id: "newreq" } }), { status: 201 }));
   vi.stubGlobal("fetch", fetchMock);
   const { createOngoingRequest } = await import("@/lib/sources/asc-live");
   const r = await createOngoingRequest({ keyId: "k", issuerId: "i", privateKey: "p" } as any, "app9");
