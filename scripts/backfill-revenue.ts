@@ -6,7 +6,8 @@ import { ascFetchSalesTsv, parseSalesRows, convertSalesDayToEur } from "@/lib/so
 import { prepareSalesBackfill } from "@/lib/sources/revenueBackfill";
 import { fetchEurRates, type EurRates } from "@/lib/fx";
 import { ghBackendFromEnv, makeStore } from "@/lib/store/store";
-import { salesPath, type AppMeta, type SalesDay } from "@/lib/store/paths";
+import { salesPath, configPath, type AppMeta, type Config, type SalesDay } from "@/lib/store/paths";
+import { countFromMap, onOrAfter } from "@/lib/countFrom";
 
 type ReportCache = Record<string, Record<string, string>[]>;
 interface PlanFile { path: string; rows: SalesDay[] }
@@ -25,6 +26,8 @@ export async function runBackfill(args: string[]) {
   const snapshot = await backend.snapshot!();
   const apps = [...snapshot.entries()].filter(([p]) => /^data\/\d+\/meta\.json$/.test(p)).map(([, value]) => value as AppMeta);
   const files = [...snapshot.entries()].filter(([p]) => /^data\/\d+\/sales\/\d{4}-\d{2}\.json$/.test(p)) as [string, SalesDay[]][];
+  // A transferred app's days before its countFrom (lib/countFrom.ts) are neither enriched nor seeded.
+  const cf = countFromMap((snapshot.get(configPath()) as Config | undefined) ?? { apps: {} });
   await writeFile(path.join(output, "baseline-sales.json"), JSON.stringify(Object.fromEntries(files)), { mode: 0o600 });
   const dates = [...new Set(files.flatMap(([p, rows]) => rows.filter((r) => p.endsWith(`${r.day.slice(0, 7)}.json`)).map((r) => r.day)))].sort();
   const cachePath = path.join(output, "reports.json");
@@ -48,7 +51,7 @@ export async function runBackfill(args: string[]) {
   for (const [file, rows] of files) {
     const appId = file.split("/")[1];
     const updates: SalesDay[] = [];
-    for (const previous of rows) {
+    for (const previous of onOrAfter(rows, cf[appId])) {
       if (!file.endsWith(`${previous.day.slice(0, 7)}.json`)) continue;
       const incoming = parsed.get(previous.day)?.[appId];
       if (!incoming) { exceptions.push({ appId, day: previous.day, reason: "Report unavailable" }); continue; }
@@ -73,7 +76,7 @@ export async function runBackfill(args: string[]) {
     const existing = (snapshot.get(file) as SalesDay[] | undefined)?.find((r) => r.day === latest);
     if (existing) continue;
     const incoming = parsed.get(latest)![app.appId];
-    if (!incoming) continue;
+    if (!incoming || onOrAfter([incoming], cf[app.appId]).length === 0) continue;
     if (incoming.proceedsUsd !== 0 || Object.values(incoming.proceedsByCcy ?? {}).some((n) => n !== 0)) {
       exceptions.push({ appId: app.appId, day: latest, reason: "Unrecorded proceeds require a separate collection before classification" });
       continue;

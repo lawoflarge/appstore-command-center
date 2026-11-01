@@ -8,6 +8,7 @@ import type { Store } from "@/lib/store/store";
 import type { AppInput } from "@/lib/intelligence/engine";
 import type { FunnelStage } from "@/lib/intelligence/funnel";
 import { rowsInMonth } from "@/lib/dates";
+import { countFromMap, onOrAfter, reviewsOnOrAfter, type CountFromMap } from "@/lib/countFrom";
 
 // Aggregate a contiguous slice of analytics days into one funnel stage. Rates are
 // ratios, so summing a window is equivalent to averaging it.
@@ -71,16 +72,17 @@ function recentMonthStarts(day: string): string[] {
 // touches a subset of apps, but insights must still cover the whole portfolio — reading
 // each app's freshly-written analytics + keywords back from the store makes a partial run
 // and a full run converge on the same result. Each month file is filtered to its own month
-// (rolling-window days can spill across the boundary) so a day is never double-counted.
+// (rolling-window days can spill across the boundary) so a day is never double-counted, and to
+// the app's countFrom (app transfer) so anomaly / funnel / forecast never see an earlier day.
 async function buildIntelInputsFromStore(
-  store: Store, apps: AppMeta[], day: string,
+  store: Store, apps: AppMeta[], day: string, cf: CountFromMap,
 ): Promise<AppInput[]> {
   const months = recentMonthStarts(day);
   return Promise.all(apps.map(async (a) => {
     const files = await Promise.all(
       months.map((m) => store.readJson<AnalyticsDay[]>(analyticsPath(a.appId, m), [])));
-    const analytics = files.flatMap((rows, i) => rowsInMonth(rows, months[i]));
-    const keywords = await store.readJson<KeywordRank[]>(keywordsPath(a.appId, day), []);
+    const analytics = onOrAfter(files.flatMap((rows, i) => rowsInMonth(rows, months[i])), cf[a.appId]);
+    const keywords = onOrAfter(await store.readJson<KeywordRank[]>(keywordsPath(a.appId, day), []), cf[a.appId]);
     return buildAppInput(a, analytics, keywords);
   }));
 }
@@ -113,6 +115,10 @@ export async function runDailyCollection(input: {
     ? allApps.filter((a) => input.appIds!.includes(a.appId))
     : allApps;
   const config = await store.readJson<Config>(configPath(), { apps: {} });
+  // Per-app countFrom (app transfer cutoff, see lib/countFrom.ts): every collector below drops
+  // rows dated before it BEFORE writing, so neither Apple's rolling windows nor a re-run can
+  // persist the previous owner's history.
+  const cf = countFromMap(config);
 
   const status: RunStatus = {
     lastRun: new Date().toISOString(),
@@ -162,6 +168,7 @@ export async function runDailyCollection(input: {
   if (apps.length > 0) {
     try {
       salesByApp = await deps.collectSales(apps, day);
+      for (const id of Object.keys(salesByApp)) salesByApp[id] = onOrAfter(salesByApp[id], cf[id]);
       appIds.forEach((id) => mark(id, "sales", true, { rows: salesByApp[id]?.length ?? 0 }));
     } catch (e: any) {
       appIds.forEach((id) => mark(id, "sales", false, { error: String(e?.message ?? e) }));
@@ -173,6 +180,7 @@ export async function runDailyCollection(input: {
   // blew the 60s Hobby function cap once analytics started doing real CSV downloads.
   const perApp = apps.map(async (a) => {
     const id = a.appId;
+    const from = cf[id];
     // Sales rows carry lagged report dates (the trailing window, see collectSalesWindow); file
     // each under its own day, grouped per month file so a window spanning a month boundary lands
     // in both files with one write each. The write is guarded (like every other per-app write
@@ -196,7 +204,7 @@ export async function runDailyCollection(input: {
     // source instead of escaping the parallel pass.
     try {
       const analyticsDays = await deps.collectAnalytics(id);
-      const aDays = Object.values(analyticsDays) as AnalyticsDay[];
+      const aDays = onOrAfter(Object.values(analyticsDays) as AnalyticsDay[], from);
       // The analytics report is a rolling multi-day window that can straddle a month boundary. File
       // each row under ITS OWN month (like the sales write above) — dumping the whole window into
       // today's month file duplicated late-previous-month days across two files, which double-counts
@@ -213,22 +221,26 @@ export async function runDailyCollection(input: {
     } catch (e: any) { mark(id, "analytics", false, { error: String(e?.message ?? e) }); }
 
     try {
-      const reviews = await deps.collectReviews(id);
+      const reviews = reviewsOnOrAfter(await deps.collectReviews(id), from);
       if (reviews.length) {
         const prevReviews = await store.readJson<Review[]>(reviewsPath(id), []);
         const map = new Map(prevReviews.map((r) => [r.id, r]));
         for (const r of reviews) map.set(r.id, r);
-        await store.writeJson(reviewsPath(id), [...map.values()], `data: reviews ${id}`);
+        await store.writeJson(reviewsPath(id), reviewsOnOrAfter([...map.values()], from), `data: reviews ${id}`);
       }
       mark(id, "reviews", true, { rows: reviews.length });
     } catch (e: any) { mark(id, "reviews", false, { error: String(e?.message ?? e) }); }
 
-    try { const rp = await deps.collectRatings(id, day); await store.upsertDailyArray(ratingsPath(id, day), [rp], `data: ratings ${id} ${day}`); mark(id, "ratings", true, { rows: 1 }); }
+    try {
+      const rp = onOrAfter([await deps.collectRatings(id, day)], from);
+      if (rp.length) await store.upsertDailyArray(ratingsPath(id, day), rp, `data: ratings ${id} ${day}`);
+      mark(id, "ratings", true, { rows: rp.length });
+    }
     catch (e: any) { mark(id, "ratings", false, { error: String(e?.message ?? e) }); }
 
     try {
       const watch = config.apps[id]?.keywords ?? [];
-      const kr = await deps.collectKeywords(id, day);
+      const kr = onOrAfter(await deps.collectKeywords(id, day), from);
       if (kr.length) await store.upsertDailyArray(keywordsPath(id, day), kr, `data: keywords ${id} ${day}`);
       void watch;
       mark(id, "keywords", true, { rows: kr.length });
@@ -242,7 +254,7 @@ export async function runDailyCollection(input: {
   // batch run converge on the same insights.
   if (runIntel) {
     try {
-      const intelInputs = await buildIntelInputsFromStore(store, allApps, day);
+      const intelInputs = await buildIntelInputsFromStore(store, allApps, day, cf);
       const insights = await deps.runIntelligence({ day, apps: intelInputs });
       await store.writeJson(insightsPath(), insights, `data: insights ${day}`);
       // Mark success explicitly — without it, a stale failed mark (and its error string)

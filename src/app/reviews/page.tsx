@@ -3,15 +3,18 @@ import { Card } from "@/components/glass/Card";
 import { makeStore, ghBackendFromEnv } from "@/lib/store/store";
 import { visibleAppIds } from "@/lib/aggregate/api";
 import { reviewsPath, type Review } from "@/lib/store/paths";
+import { loadCountFrom, reviewsOnOrAfter } from "@/lib/countFrom";
 
 export const dynamic = "force-dynamic";
 
 export default async function Reviews() {
   const store = makeStore(ghBackendFromEnv(), { cacheReads: true });
   const ids = await visibleAppIds(store);
+  const cf = await loadCountFrom(store);
   const all: { appId: string; r: Review }[] = [];
   for (const id of ids) {
-    const rs = await store.readJson<Review[]>(reviewsPath(id), []);
+    // A transferred app shows only reviews from its countFrom on (lib/countFrom.ts).
+    const rs = reviewsOnOrAfter(await store.readJson<Review[]>(reviewsPath(id), []), cf[id]);
     rs.slice(0, 20).forEach((r) => all.push({ appId: id, r }));
   }
   all.sort((a, b) => b.r.createdDate.localeCompare(a.r.createdDate));

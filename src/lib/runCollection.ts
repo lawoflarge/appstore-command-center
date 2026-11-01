@@ -15,6 +15,7 @@ import { runIntelligence } from "@/lib/intelligence/engine";
 import { configPath, admobPath, admobCoveragePath, type Config, type RunStatus, type AdMobReportCoverage } from "@/lib/store/paths";
 import { admobConfigured, collectAdmobReport, type AdMobRow } from "@/lib/sources/admob";
 import { fetchEurRates, type EurRates } from "@/lib/fx";
+import { countFromMap } from "@/lib/countFrom";
 
 export type AdmobResult = { ok: boolean; rows?: number; error?: string };
 
@@ -114,10 +115,11 @@ export async function discoverAppIds(): Promise<string[]> {
 // near-real-time. Returns the app list so the client can drive the per-app batches.
 export async function runRefreshStart(): Promise<{ appIds: string[]; admob: AdmobResult; subscriptions: SubscriptionsResult }> {
   const { e, key, store, day } = setup();
+  const config = await store.readJson<Config>(configPath(), { apps: {} });
   const [apps, admob, subscriptions] = await Promise.all([
     discoverApps(ascFetchApps(key), day),
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
   ]);
   return { appIds: apps.map((a) => a.appId), admob, subscriptions };
 }
@@ -144,7 +146,7 @@ export async function runCronBatch(appIds: string[]): Promise<CollectionResult> 
   const config = await store.readJson<Config>(configPath(), { apps: {} });
   const [admob, subscriptions, status] = await Promise.all([
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
     runDailyCollection({ day, store, deps: makeDeps(e, key, config), appIds, intelligence: true }),
   ]);
   return { status, admob, subscriptions };
@@ -159,7 +161,7 @@ export async function runFullCollection(): Promise<CollectionResult> {
   const [status, admob, subscriptions] = await Promise.all([
     runDailyCollection({ day, store, deps: makeDeps(e, key, config), intelligence: true }),
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
   ]);
   return { status, admob, subscriptions };
 }
