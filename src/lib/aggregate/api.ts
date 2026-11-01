@@ -2,9 +2,11 @@ import type { Store } from "@/lib/store/store";
 import { salesPath, analyticsPath, appMetaPath, insightsPath, ratingsPath, configPath, runStatusPath, type SalesDay, type AnalyticsDay, type AppMeta, type RatingPoint, type Config, type RunStatus } from "@/lib/store/paths";
 import { rowsInMonth, monthsBetween } from "@/lib/dates";
 import { totals, analyticsTotals } from "./downloads";
+import { loadCountFrom, onOrAfter, lifetimeFrom } from "@/lib/countFrom";
 
 export async function buildGlance(store: Store, appIds: string[], month: string) {
   const insights = await store.readJson<any>(insightsPath(), { apps: {} });
+  const cf = await loadCountFrom(store);
   // Pass 1: load each visible app's current-month rows and find the SHARED latest day — the max
   // data day across ALL apps. A single global reference day is what keeps the summary, the per-app
   // list and the chart consistent: an app whose newest report is older than the reference day shows
@@ -20,14 +22,17 @@ export async function buildGlance(store: Store, appIds: string[], month: string)
     // downloads" is the real lifetime sum, not just the current month file. Each file is filtered
     // to its own month (drops cross-month spillover from Apple's rolling window) so a day is
     // canonical to one file. The cap in monthsBetween guards a missing/garbage firstSeen.
-    const months = monthsBetween((meta.firstSeen || `${month}-01`).slice(0, 7), month);
+    // A transferred app (countFrom, see lib/countFrom.ts) starts its lifetime at the cutoff, and
+    // every row before it is dropped, so the previous owner's history never reaches a total.
+    const from = cf[id];
+    const months = monthsBetween(lifetimeFrom(meta.firstSeen || `${month}-01`, from).slice(0, 7), month);
     const [analyticsByMonth, salesByMonth] = await Promise.all([
       Promise.all(months.map((m) => store.readJson<AnalyticsDay[]>(analyticsPath(id, `${m}-01`), []))),
       Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
     ]);
-    const analytics = analyticsByMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
-    const sales = salesByMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
-    const ratings = await store.readJson<RatingPoint[]>(ratingsPath(id, month + "-01"), []);
+    const analytics = onOrAfter(analyticsByMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)), from);
+    const sales = onOrAfter(salesByMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)), from);
+    const ratings = onOrAfter(await store.readJson<RatingPoint[]>(ratingsPath(id, month + "-01"), []), from);
     // Prefer analytics — it matches ASC "Analytics → Overview". Sales TSV is the finance report;
     // for free apps it's commonly empty and always lags ~24h.
     const useAnalytics = analytics.length > 0;

@@ -12,6 +12,7 @@ import { RevenueCharts, type SeriesPoint, type Breakdown } from "@/components/re
 import { IapCharts } from "@/components/revenue/IapCharts";
 import { MonthlyRevenueOverview } from "@/components/revenue/MonthlyRevenueOverview";
 import { ActiveSubscriptions } from "@/components/revenue/ActiveSubscriptions";
+import { loadCountFrom, onOrAfter, subscriptionsOnOrAfter } from "@/lib/countFrom";
 
 export const dynamic = "force-dynamic";
 
@@ -60,13 +61,17 @@ export default async function Revenue({ searchParams }: { searchParams?: Promise
   const now = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(currentTime);
   const curMonth = now.slice(0, 7);
   const months = lastMonths(curMonth, 18);
-  const [arrays, kbArrays, ids, snapshot, adCoverage] = await Promise.all([
+  const [arrays, kbArrays, ids, storedSnapshot, adCoverage, cf] = await Promise.all([
     Promise.all(months.map((m) => store.readJson<AdMobRow[]>(admobPath(`${m}-01`), []))),
     Promise.all(months.map((m) => store.readJson<KickbacksDay[]>(kickbacksPath(`${m}-01`), []))),
     visibleAppIds(store),
     store.readJson<SubscriptionSnapshot | null>(subscriptionsPath(), null),
     store.readJson<AdMobReportCoverage | null>(admobCoveragePath(), null),
+    loadCountFrom(store),
   ]);
+  // A transferred app counts only from its countFrom (lib/countFrom.ts): its earlier proceeds and
+  // subscription stock are never part of any total, month, breakdown or forecast below.
+  const snapshot = subscriptionsOnOrAfter(storedSnapshot, cf);
   const all = arrays.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`));
   const kbAll = kbArrays.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)).sort((a, b) => a.day.localeCompare(b.day));
   const appSales = await Promise.all(ids.map(async (id) => {
@@ -74,7 +79,7 @@ export default async function Revenue({ searchParams }: { searchParams?: Promise
       store.readJson<AppMeta | null>(appMetaPath(id), null),
       Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
     ]);
-    return { appId: id, name: meta?.name ?? id, sales: perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)) };
+    return { appId: id, name: meta?.name ?? id, sales: onOrAfter(perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)), cf[id]) };
   }));
   const availableMonths = [...new Set([
     curMonth, ...all.map((row) => row.day.slice(0, 7)), ...kbAll.map((row) => row.day.slice(0, 7)),

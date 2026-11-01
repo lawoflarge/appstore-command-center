@@ -70,6 +70,15 @@ describe("subscription stock reports", () => {
     expect(data.read()!.reportDate).toBe("2026-10-09");
   });
 
+  it("drops a transferred app's products from a snapshot dated before its countFrom", async () => {
+    const data = inMemoryStore();
+    const rows = [row(), row({ "App Apple ID": "200", "Subscription Apple ID": "201" })];
+    await collectSubscriptionsInto(async (day) => day === "2026-10-31" ? rows : null, data.store, "2026-11-01", { countFrom: { "200": "2026-11-01" } });
+    expect(data.read()!.products.map((p) => p.appAppleId)).toEqual(["100"]);
+    await collectSubscriptionsInto(async (day) => day === "2026-11-01" ? rows : null, data.store, "2026-11-02", { countFrom: { "200": "2026-11-01" } });
+    expect(data.read()!.products.map((p) => p.appAppleId)).toEqual(["100", "200"]);
+  });
+
   it("does not replace a newer stored report with an older result", async () => {
     const previous = parseSubscriptionSnapshot([row({ "Active Standard Price Subscriptions": "7" })], "2026-10-09");
     const data = inMemoryStore(previous);

@@ -4,6 +4,7 @@ import { signAscToken, type AscKey } from "@/lib/asc/jwt";
 import { addDays } from "@/lib/dates";
 import { subscriptionsPath, type SubscriptionCounts, type SubscriptionProduct, type SubscriptionSnapshot } from "@/lib/store/paths";
 import type { Store } from "@/lib/store/store";
+import { subscriptionsOnOrAfter, type CountFromMap } from "@/lib/countFrom";
 
 // Official SUBSCRIPTION/SUMMARY 1_3 stock report. These groups are disjoint; grace/retry
 // describe billing states and must never be added to paid subscription totals.
@@ -98,8 +99,11 @@ export function newerSubscriptionSnapshot(previous: SubscriptionSnapshot | null,
   return incoming;
 }
 
+// countFrom: an app transferred in from another developer is left out of any snapshot dated
+// before its cutoff (lib/countFrom.ts), so the stored stock never carries pre-transfer days.
 export async function collectSubscriptionsInto(
-  fetchTsv: FetchSubscriptionsTsv, store: Store, day: string, collectedAt = new Date().toISOString(),
+  fetchTsv: FetchSubscriptionsTsv, store: Store, day: string,
+  { collectedAt = new Date().toISOString(), countFrom = {} }: { collectedAt?: string; countFrom?: CountFromMap } = {},
 ): Promise<SubscriptionsResult> {
   try {
     // Five bounded account-wide requests run together, not once per app or per UI render.
@@ -108,7 +112,7 @@ export async function collectSubscriptionsInto(
     const newest = reports.findIndex((r) => r.status === "fulfilled" && r.value !== null);
     if (newest === -1) return { ok: false, error: "No subscription report available in the last five days; the previous snapshot is retained." };
     const report = reports[newest] as PromiseFulfilledResult<Record<string, string>[]>;
-    const snapshot = parseSubscriptionSnapshot(report.value, dates[newest], collectedAt);
+    const snapshot = subscriptionsOnOrAfter(parseSubscriptionSnapshot(report.value, dates[newest], collectedAt), countFrom)!;
     await store.writeJson(subscriptionsPath(), snapshot, `data: subscription stock ${snapshot.reportDate}`, newerSubscriptionSnapshot);
     return { ok: true, reportDate: snapshot.reportDate, products: snapshot.products.length };
   } catch {

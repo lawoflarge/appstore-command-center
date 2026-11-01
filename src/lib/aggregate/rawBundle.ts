@@ -4,6 +4,7 @@ import {
   type SalesDay, type AnalyticsDay, type RatingPoint, type Review, type KeywordRank, type AppMeta,
 } from "@/lib/store/paths";
 import { rowsInMonth } from "@/lib/dates";
+import { loadCountFrom, onOrAfter, reviewsOnOrAfter } from "@/lib/countFrom";
 import type { RawBundle } from "./series";
 
 function lastNMonths(today: string, n: number): string[] {
@@ -26,6 +27,7 @@ export async function loadRawBundle(
   const ratings: RawBundle["ratings"] = {};
   const reviews: RawBundle["reviews"] = {};
   const keywords: RawBundle["keywords"] = {};
+  const cf = await loadCountFrom(store);
 
   await Promise.all(appIds.map(async (id) => {
     const meta = await store.readJson<AppMeta | null>(appMetaPath(id), null);
@@ -39,11 +41,14 @@ export async function loadRawBundle(
     // Filter each month file to its own month before flattening — Apple's rolling analytics window
     // can spill a prior month's days into the current file, which would double-count in funnel /
     // breakdown reads (they sum every row) and resolve to stale values in the day-keyed maps.
-    sales[id]     = s.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
-    analytics[id] = a.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
-    ratings[id]   = r.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
-    keywords[id]  = k.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i]));
-    reviews[id]   = await store.readJson<Review[]>(reviewsPath(id), []);
+    // Then drop anything before the app's countFrom (app transfer, see lib/countFrom.ts): every
+    // chart, funnel and breakdown on Glance and the per-app page reads through here.
+    const from = cf[id];
+    sales[id]     = onOrAfter(s.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i])), from);
+    analytics[id] = onOrAfter(a.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i])), from);
+    ratings[id]   = onOrAfter(r.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i])), from);
+    keywords[id]  = onOrAfter(k.flatMap((rows, i) => rowsInMonth(rows, monthStarts[i])), from);
+    reviews[id]   = reviewsOnOrAfter(await store.readJson<Review[]>(reviewsPath(id), []), from);
   }));
 
   return { apps, sales, analytics, ratings, reviews, keywords, today };

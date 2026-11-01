@@ -70,6 +70,9 @@ export interface RatingPoint { day: string; byCountry: Record<string, { avg: num
 export interface Review { id: string; rating: number; title: string; body: string; reviewer: string; territory: string; createdDate: string; responded: boolean; }
 export interface KeywordRank { day: string; term: string; country: string; rank: number | null; }
 export interface AppMeta { appId: string; name: string; bundleId: string; sku: string; firstSeen: string; hidden: boolean; archived: boolean; releases: { version: string; date: string }[]; }
-export interface AppConfig { hidden: boolean; archived: boolean; keywords: { term: string; country: string }[]; goalDownloadsPerMonth?: number; }
+// countFrom (YYYY-MM-DD, inclusive): the first day this app counts in ANY metric. Set by hand for
+// an app transferred in from another developer, so the previous owner's history never counts
+// (see lib/countFrom.ts). Not editable from Settings; applyConfigPatch preserves it.
+export interface AppConfig { hidden: boolean; archived: boolean; keywords: { term: string; country: string }[]; goalDownloadsPerMonth?: number; countFrom?: string; }
 export interface Config { apps: Record<string, AppConfig>; }
 export interface RunStatus { lastRun: string; lastSuccess: string; perApp: Record<string, Record<string, { ok: boolean; at: string; error?: string; rows?: number }>>; }

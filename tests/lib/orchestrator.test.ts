@@ -240,3 +240,77 @@ test("a successful meta write marks meta ok and clears a stale failure", async (
   expect(persisted.perApp["1"].meta.ok).toBe(true);
   expect(persisted.lastSuccess).not.toBe("");
 });
+
+// App transfer: an app taken over from another developer counts only from the acceptance day
+// (config countFrom). Apple's rolling analytics window, the trailing sales window and the full
+// review history all reach back before that day; none of it may be written for that app, while
+// an app without countFrom keeps every row exactly as before.
+test("countFrom: nothing dated before an app's cutoff is written, other apps are untouched", async () => {
+  const store = memStore();
+  store.fs.set("data/config.json", { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-01" } } });
+  const a = (day: string, downloads: number) => ({ day, impressions: 9, pageViews: 4, downloads, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: { search: downloads } });
+  const s = (day: string, total: number) => ({ day, byCountry: { US: total }, total, redownloads: 0, proceedsUsd: 1, proceedsEur: 1 });
+  const rv = (id: string, createdDate: string) => ({ id, rating: 5, title: "t", body: "b", reviewer: "r", territory: "USA", createdDate, responded: false });
+  const twoApps = [
+    { appId: "1", name: "Transferred", bundleId: "b1", sku: "s1", firstSeen: "2026-11-01", hidden: false, archived: false, releases: [] },
+    { appId: "2", name: "Own", bundleId: "b2", sku: "s2", firstSeen: "2026-05-18", hidden: false, archived: false, releases: [] },
+  ];
+  const runIntelligence = vi.fn(async () => ({ generatedAt: "2026-11-02", apps: {} }));
+  const status = await runDailyCollection({
+    day: "2026-11-02", store: store as any,
+    deps: okDeps({
+      discoverApps: async () => twoApps,
+      collectSales: async () => ({
+        "1": [s("2026-10-30", 3), s("2026-10-31", 4), s("2026-11-01", 5)],
+        "2": [s("2026-10-31", 6), s("2026-11-01", 7)],
+      }),
+      collectAnalytics: async () => ({ "2026-10-18": a("2026-10-18", 40), "2026-10-31": a("2026-10-31", 2), "2026-11-01": a("2026-11-01", 1) }),
+      collectReviews: async () => [rv("old", "2026-09-12T10:00:00-07:00"), rv("new", "2026-11-01T09:00:00-07:00")],
+      collectRatings: async (_id: string, d: string) => ({ day: d, byCountry: {}, avg: 4.5, count: 10 }),
+      collectKeywords: async () => [{ day: "2026-10-31", term: "x", country: "us", rank: 3 }, { day: "2026-11-02", term: "x", country: "us", rank: 2 }],
+      runIntelligence,
+    }),
+  });
+  // Transferred app: no October file of any kind, only the cutoff day onward.
+  expect(store.fs.has("data/1/sales/2026-10.json")).toBe(false);
+  expect(store.fs.has("data/1/analytics/2026-10.json")).toBe(false);
+  expect(store.fs.has("data/1/keywords/2026-10.json")).toBe(false);
+  expect(store.fs.get("data/1/sales/2026-11.json").map((r: any) => r.day)).toEqual(["2026-11-01"]);
+  expect(store.fs.get("data/1/analytics/2026-11.json").map((r: any) => r.day)).toEqual(["2026-11-01"]);
+  expect(store.fs.get("data/1/reviews.json").map((r: any) => r.id)).toEqual(["new"]);
+  expect(store.fs.get("data/1/ratings/2026-11.json").map((r: any) => r.day)).toEqual(["2026-11-02"]);
+  expect(store.fs.get("data/1/keywords/2026-11.json").map((r: any) => r.day)).toEqual(["2026-11-02"]);
+  expect(status.perApp["1"].sales).toMatchObject({ ok: true, rows: 1 });
+  expect(status.perApp["1"].analytics).toMatchObject({ ok: true, rows: 1 });
+  // App without countFrom: every row written exactly as collected.
+  expect(store.fs.get("data/2/sales/2026-10.json").map((r: any) => r.day)).toEqual(["2026-10-31"]);
+  expect(store.fs.get("data/2/analytics/2026-10.json").map((r: any) => r.day)).toEqual(["2026-10-18", "2026-10-31"]);
+  expect(store.fs.get("data/2/reviews.json").map((r: any) => r.id)).toEqual(["old", "new"]);
+  // Intelligence inputs (anomaly, funnel, forecast) see only the transferred app's own days.
+  const inputs = (runIntelligence.mock.calls[0] as any)[0].apps;
+  expect(inputs.find((x: any) => x.appId === "1").downloads.map((p: any) => p.day)).toEqual(["2026-11-01"]);
+  expect(inputs.find((x: any) => x.appId === "2").downloads.map((p: any) => p.day)).toEqual(["2026-10-18", "2026-10-31", "2026-11-01"]);
+});
+
+test("countFrom: intelligence ignores pre-cutoff rows already sitting in the store", async () => {
+  const store = memStore();
+  store.fs.set("data/config.json", { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-01" } } });
+  const a = (day: string, downloads: number) => ({ day, impressions: 0, pageViews: 0, downloads, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: {} });
+  store.fs.set("data/1/analytics/2026-10.json", [a("2026-10-30", 50), a("2026-10-31", 60)]);
+  store.fs.set("data/1/analytics/2026-11.json", [a("2026-11-01", 2)]);
+  store.fs.set("data/1/reviews.json", [{ id: "old", rating: 1, title: "", body: "", reviewer: "", territory: "USA", createdDate: "2026-10-02T00:00:00-07:00", responded: false }]);
+  const runIntelligence = vi.fn(async () => ({ generatedAt: "2026-11-02", apps: {} }));
+  await runDailyCollection({
+    day: "2026-11-02", store: store as any,
+    deps: okDeps({
+      collectSales: async () => ({}),
+      collectReviews: async () => [{ id: "new", rating: 5, title: "", body: "", reviewer: "", territory: "USA", createdDate: "2026-11-01T12:00:00-07:00", responded: false }],
+      collectRatings: async (_id: string, d: string) => ({ day: d, byCountry: {}, avg: 0, count: 0 }),
+      runIntelligence,
+    }),
+  });
+  const input = (runIntelligence.mock.calls[0] as any)[0].apps[0];
+  expect(input.downloads).toEqual([{ day: "2026-11-01", value: 2 }]);
+  // A review merge rewrites reviews.json; a stale pre-cutoff review must not survive it.
+  expect(store.fs.get("data/1/reviews.json").map((r: any) => r.id)).toEqual(["new"]);
+});

@@ -13,6 +13,9 @@ export function applyConfigPatch(cfg: Config, patch: {
         archived: patch.archived ?? cur.archived,
         keywords: patch.keywords ?? cur.keywords,
         goalDownloadsPerMonth: cur.goalDownloadsPerMonth,
+        // Hand-set app transfer cutoff (lib/countFrom.ts). Not patchable from Settings, and it
+        // must survive every Settings save or the next collection rewrites the old history.
+        countFrom: cur.countFrom,
       },
     },
   };

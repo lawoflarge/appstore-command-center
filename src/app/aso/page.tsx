@@ -5,6 +5,7 @@ import { insightsPath, keywordsPath, type KeywordRank } from "@/lib/store/paths"
 import { visibleAppIds } from "@/lib/aggregate/api";
 import { todayUtc } from "@/lib/dates";
 import type { Insights, AppInsight } from "@/lib/intelligence/engine";
+import { loadCountFrom, onOrAfter } from "@/lib/countFrom";
 
 export const dynamic = "force-dynamic";
 
@@ -33,10 +34,12 @@ export default async function Aso() {
   const month = todayUtc().slice(0, 7);
   const ids = await visibleAppIds(store);
   const insights = await store.readJson<Insights>(insightsPath(), { generatedAt: "", apps: {} });
+  const cf = await loadCountFrom(store);
   const perApp = await Promise.all(
     ids.map(async (id) => ({
       id,
-      ranks: latestRanks(await store.readJson<KeywordRank[]>(keywordsPath(id, `${month}-01`), [])),
+      // Keyword ranks before a transferred app's countFrom are ignored (lib/countFrom.ts).
+      ranks: latestRanks(onOrAfter(await store.readJson<KeywordRank[]>(keywordsPath(id, `${month}-01`), []), cf[id])),
       insight: insights.apps[id] as AppInsight | undefined,
     })),
   );

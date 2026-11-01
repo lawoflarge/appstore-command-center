@@ -124,3 +124,39 @@ test("visibleAppIds returns [] before any cron run (no run-status yet)", async (
   const store = { readJson: async (_p: string, fb: any) => fb };
   expect(await visibleAppIds(store as any)).toEqual([]);
 });
+
+// App transfer: the transferred app's lifetime total, latest day and rating history start at its
+// countFrom, even when its firstSeen or stored month files reach back further. Other apps keep
+// their full history.
+test("buildGlance counts a countFrom app only from its cutoff and leaves other apps unchanged", async () => {
+  const a = (day: string, downloads: number) => ({
+    day, impressions: 0, pageViews: 0, downloads, sessions: 0,
+    activeDevices: 0, deletions: 0, crashes: 0, bySource: {},
+  });
+  const reads: string[] = [];
+  const store = {
+    readJson: async (p: string, fb: any) => {
+      reads.push(p);
+      if (p === "data/config.json") return { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-01" } } };
+      if (p === "data/1/meta.json") return { appId: "1", name: "Transferred", firstSeen: "2026-09-20", hidden: false, archived: false, releases: [] };
+      if (p === "data/2/meta.json") return { appId: "2", name: "Own", firstSeen: "2026-10-01", hidden: false, archived: false, releases: [] };
+      if (p === "data/1/analytics/2026-10.json") return [a("2026-10-30", 100), a("2026-10-31", 200)];
+      if (p === "data/1/analytics/2026-11.json") return [a("2026-10-31", 200), a("2026-11-01", 3), a("2026-11-02", 4)];
+      if (p === "data/2/analytics/2026-10.json") return [a("2026-10-31", 5)];
+      if (p === "data/2/analytics/2026-11.json") return [a("2026-11-01", 6)];
+      if (p === "data/1/ratings/2026-11.json") return [{ day: "2026-11-02", byCountry: {}, avg: 4, count: 10 }];
+      if (p === "data/insights.json") return { apps: {} };
+      return fb;
+    },
+  };
+  const g = await buildGlance(store as any, ["1", "2"], "2026-11");
+  const transferred = g.apps.find((x: any) => x.appId === "1")!;
+  const own = g.apps.find((x: any) => x.appId === "2")!;
+  expect(transferred).toMatchObject({ total: 7, today: 4, latestDay: "2026-11-02" });
+  expect(own).toMatchObject({ total: 11, today: 6, latestDay: "2026-11-01" });
+  // Lifetime months start at the later of firstSeen and countFrom: no read of the
+  // transferred app's September or October files at all.
+  expect(reads).not.toContain("data/1/analytics/2026-09.json");
+  expect(reads).not.toContain("data/1/analytics/2026-10.json");
+  expect(reads).toContain("data/2/analytics/2026-10.json");
+});
