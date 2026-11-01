@@ -1,7 +1,8 @@
 import type { AdMobRow } from "@/lib/sources/admob";
 import type { SalesDay, AdMobReportCoverage } from "@/lib/store/paths";
 
-export interface RevenueAppSales { appId: string; name: string; sales: SalesDay[] }
+// countFrom: the app's transfer cutoff (lib/countFrom.ts); its sales are already filtered to it.
+export interface RevenueAppSales { appId: string; name: string; sales: SalesDay[]; countFrom?: string }
 interface Amounts {
   oneTime: number;
   subscriptions: number;
@@ -75,7 +76,11 @@ export function buildMonthlyRevenue(
     const rows = [...new Map(app.sales.map((row) => [row.day, row])).values()]
       .filter((row) => row.day.startsWith(`${month}-`) && row.day <= today);
     const confirmed = rows.filter((row) => row.reportAvailable && row.day < today).map((row) => row.day).sort();
-    coverage.push(confirmed.at(-1) ?? null);
+    // A transferred app whose countFrom falls in this month or later has nothing Apple could have
+    // reported before its first post-transfer report. Until that report it counts as zero rows and
+    // must not hold back the portfolio's appleThrough (and with it the whole forecast).
+    const awaitingFirstReport = confirmed.length === 0 && app.countFrom !== undefined && app.countFrom.slice(0, 7) >= month;
+    if (!awaitingFirstReport) coverage.push(confirmed.at(-1) ?? null);
     for (const row of rows) {
       appleDays.push(row.day);
       const amount = euroAmount(row);

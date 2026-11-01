@@ -16,18 +16,41 @@ import type { Store } from "@/lib/store/store";
 //               the revenue, reviews and ASO pages and the intelligence inputs ignore any
 //               earlier day that is in the data repo anyway.
 // Apps without countFrom pass through untouched (same array, same values).
+//
+// Dates are compared as strings, so a value must be a real zero-padded calendar date: "2026-11-1"
+// sorts after "2026-11-09" and would silently let the first nine days through. An invalid value
+// stops collection (countFromMap throws before anything is written); read paths log it and count
+// nothing for that app (COUNT_NOTHING) rather than show the previous owner's history.
 
 /** appId → countFrom, for the apps that have one. */
 export type CountFromMap = Record<string, string>;
 
-export function countFromMap(config: Config): CountFromMap {
+/** Read-path stand-in for an invalid countFrom: later than any real day, so nothing counts. */
+export const COUNT_NOTHING = "9999-12-31";
+
+function isCalendarDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/** Collection / write paths: throws on an invalid countFrom. */
+export function countFromMap(config: Config, onInvalid: "throw" | "countNothing" = "throw"): CountFromMap {
   const out: CountFromMap = {};
-  for (const [id, c] of Object.entries(config.apps)) if (c.countFrom) out[id] = c.countFrom;
+  for (const [id, c] of Object.entries(config.apps)) {
+    if (c.countFrom === undefined) continue;
+    if (isCalendarDay(c.countFrom)) { out[id] = c.countFrom; continue; }
+    const problem = `data/config.json apps.${id}.countFrom ${JSON.stringify(c.countFrom)} is not a valid YYYY-MM-DD date`;
+    if (onInvalid === "throw") throw new Error(problem);
+    console.error(`${problem}; counting nothing for this app until it is fixed`);
+    out[id] = COUNT_NOTHING;
+  }
   return out;
 }
 
+/** Read paths: an invalid countFrom is logged and counts nothing for that app. */
 export async function loadCountFrom(store: Pick<Store, "readJson">): Promise<CountFromMap> {
-  return countFromMap(await store.readJson<Config>(configPath(), { apps: {} }));
+  return countFromMap(await store.readJson<Config>(configPath(), { apps: {} }), "countNothing");
 }
 
 /** Rows dated on or after `from`; the same array when there is no cutoff. */

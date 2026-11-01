@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { buildGlance, visibleAppIds } from "@/lib/aggregate/api";
 
 test("buildGlance assembles totals + rating + insights per visible app", async () => {
@@ -128,6 +128,29 @@ test("visibleAppIds returns [] before any cron run (no run-status yet)", async (
 // App transfer: the transferred app's lifetime total, latest day and rating history start at its
 // countFrom, even when its firstSeen or stored month files reach back further. Other apps keep
 // their full history.
+test("buildGlance logs an invalid countFrom and counts nothing for that app instead of its whole history", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const a = (day: string, downloads: number) => ({
+    day, impressions: 0, pageViews: 0, downloads, sessions: 0, activeDevices: 0, deletions: 0, crashes: 0, bySource: {},
+  });
+  const store = {
+    readJson: async (p: string, fb: any) => {
+      if (p === "data/config.json") return { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-1" } } };
+      if (p === "data/1/meta.json") return { appId: "1", name: "Transferred", firstSeen: "2026-10-01", hidden: false, archived: false, releases: [] };
+      if (p === "data/2/meta.json") return { appId: "2", name: "Own", firstSeen: "2026-11-01", hidden: false, archived: false, releases: [] };
+      if (p === "data/1/analytics/2026-11.json") return [a("2026-11-01", 3), a("2026-11-05", 4)];
+      if (p === "data/2/analytics/2026-11.json") return [a("2026-11-01", 6)];
+      if (p === "data/insights.json") return { apps: {} };
+      return fb;
+    },
+  };
+  const g = await buildGlance(store as any, ["1", "2"], "2026-11");
+  expect(error).toHaveBeenCalledWith(expect.stringContaining("apps.1.countFrom"));
+  expect(g.apps.find((x: any) => x.appId === "1")).toMatchObject({ total: 0, today: null });
+  expect(g.apps.find((x: any) => x.appId === "2")).toMatchObject({ total: 6, today: 6 });
+  error.mockRestore();
+});
+
 test("buildGlance counts a countFrom app only from its cutoff and leaves other apps unchanged", async () => {
   const a = (day: string, downloads: number) => ({
     day, impressions: 0, pageViews: 0, downloads, sessions: 0,

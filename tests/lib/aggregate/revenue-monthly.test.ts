@@ -35,6 +35,27 @@ describe("monthly revenue", () => {
     expect(result.forecast.ads).toBe(31);
   });
 
+  // A transferred app (countFrom, lib/countFrom.ts) has no report until Apple publishes its first
+  // post-transfer day. Until then it is zero rows, not a missing report that blocks the forecast.
+  it("a transferred app without its first report yet does not block appleThrough", () => {
+    const own = app([sale("2026-10-08", 8)]);
+    const transferred = { ...app([], "app-2"), countFrom: "2026-10-05" };
+    const result = buildMonthlyRevenue([own, transferred], [ad("2026-10-08", 8)], "2026-10", "2026-10-10", "2026-10-10", coverage("2026-10-08"));
+    expect(result.forecast).toMatchObject({ appleThrough: "2026-10-08", appleDays: 8, oneTime: 31, total: 62 });
+    // Same result as the own app alone: the transferred app adds nothing and blocks nothing.
+    const alone = buildMonthlyRevenue([own], [ad("2026-10-08", 8)], "2026-10", "2026-10-10", "2026-10-10", coverage("2026-10-08"));
+    expect(result).toEqual(alone);
+    // Months before its cutoff month: nothing to report, so not blocking either.
+    const earlier = buildMonthlyRevenue([app([sale("2026-09-08", 8)]), { ...app([], "app-2"), countFrom: "2026-10-05" }], [], "2026-09", "2026-10-10", "2026-10-10");
+    expect(earlier.forecast.appleThrough).toBe("2026-09-08");
+  });
+
+  it("a transferred app with its first report takes part in coverage like any other app", () => {
+    const transferred = { ...app([sale("2026-10-06", 2)], "app-2"), countFrom: "2026-10-05" };
+    const result = buildMonthlyRevenue([app([sale("2026-10-08", 8)]), transferred], [ad("2026-10-08", 8)], "2026-10", "2026-10-10", "2026-10-10", coverage("2026-10-08"));
+    expect(result.forecast.appleThrough).toBe("2026-10-06");
+  });
+
   it("uses the slowest app report and does not include fresher app proceeds beyond it in the forecast", () => {
     const result = buildMonthlyRevenue([app([sale("2026-10-08", 8), sale("2026-10-09", 90)]),
       app([sale("2026-10-08", 8)], "app-2")], [ad("2026-10-08", 8)], "2026-10", "2026-10-10", "2026-10-10", coverage("2026-10-08"));
