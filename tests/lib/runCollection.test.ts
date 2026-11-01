@@ -48,6 +48,30 @@ it("starts subscriptions and per-app work while account-wide AdMob is still pend
   expect((await pending).subscriptions.ok).toBe(true);
 });
 
+const cfgWith = (countFrom: string) => ({ apps: { "200": { hidden: false, archived: false, keywords: [], countFrom } } });
+
+it("passes the configured countFrom to the subscription stock collector on every entry point", async () => {
+  mocks.store.readJson.mockImplementation(async (p: string, fb: unknown) => (p === "data/config.json" ? cfgWith("2026-11-01") : fb));
+  const { runRefreshStart, runCronBatch, runFullCollection } = await import("@/lib/runCollection");
+  await runRefreshStart();
+  await runCronBatch(["100"]);
+  await runFullCollection();
+  expect(mocks.subscriptions).toHaveBeenCalledTimes(3);
+  for (const call of mocks.subscriptions.mock.calls) expect(call[3]).toEqual({ countFrom: { "200": "2026-11-01" } });
+});
+
+it("an invalid countFrom stops every entry point before any collector starts", async () => {
+  mocks.store.readJson.mockImplementation(async (p: string, fb: unknown) => (p === "data/config.json" ? cfgWith("2026-11-1") : fb));
+  const { runRefreshStart, runCronBatch, runFullCollection } = await import("@/lib/runCollection");
+  for (const run of [() => runRefreshStart(), () => runCronBatch(["100"]), () => runFullCollection()]) {
+    await expect(run()).rejects.toThrow(/apps\.200\.countFrom/);
+  }
+  expect(mocks.subscriptions).not.toHaveBeenCalled();
+  expect(mocks.admob).not.toHaveBeenCalled();
+  expect(mocks.daily).not.toHaveBeenCalled();
+  expect(mocks.discover).not.toHaveBeenCalled();
+});
+
 it("does not publish AdMob coverage when a preceding row write fails", async () => {
   mocks.admob.mockResolvedValue({ rows: [{ day: "2026-10-08", appId: "100", adUnit: "unit" }], coverage: {} });
   mocks.store.upsertKeyedArray.mockRejectedValue(new Error("write failed"));

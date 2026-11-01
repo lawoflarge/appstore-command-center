@@ -1,6 +1,6 @@
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import {
-  countFromMap, onOrAfter, reviewsOnOrAfter, lifetimeFrom, subscriptionsOnOrAfter, loadCountFrom,
+  countFromMap, onOrAfter, reviewsOnOrAfter, lifetimeFrom, subscriptionsOnOrAfter, loadCountFrom, COUNT_NOTHING,
 } from "@/lib/countFrom";
 import type { Review, SubscriptionSnapshot } from "@/lib/store/paths";
 
@@ -13,6 +13,27 @@ test("countFromMap returns only the apps that carry a countFrom", () => {
     "2": { hidden: false, archived: false, keywords: [] },
   } });
   expect(map).toEqual({ "1": CUTOFF });
+});
+
+// countFrom is compared as a string, so only a real zero-padded calendar date is safe: "2026-11-1"
+// sorts after "2026-11-09" and would silently let 11-01..11-09 through.
+test("countFromMap rejects anything that is not a valid YYYY-MM-DD date", () => {
+  for (const bad of ["2026-11-1", "2026-02-30", "2026-13-01", "20261101", "", "2026-11-01T00:00:00Z", 20261101]) {
+    const config = { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: bad as string } } };
+    expect(() => countFromMap(config), String(bad)).toThrow(/apps\.1\.countFrom/);
+  }
+  expect(countFromMap({ apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2028-02-29" } } })).toEqual({ "1": "2028-02-29" });
+});
+
+test("loadCountFrom (read paths) logs an invalid countFrom and then counts nothing for that app", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const store = { readJson: async (p: string, fb: unknown) => p === "data/config.json"
+    ? { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-1" } } } : fb };
+  const map = await loadCountFrom(store as any);
+  expect(error).toHaveBeenCalledWith(expect.stringContaining("apps.1.countFrom"));
+  expect(map["1"]).toBe(COUNT_NOTHING);
+  expect(onOrAfter([{ day: "2026-11-05" }, { day: "2099-01-01" }], map["1"])).toEqual([]);
+  error.mockRestore();
 });
 
 test("loadCountFrom reads data/config.json and falls back to no cutoffs", async () => {

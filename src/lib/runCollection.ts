@@ -116,10 +116,11 @@ export async function discoverAppIds(): Promise<string[]> {
 export async function runRefreshStart(): Promise<{ appIds: string[]; admob: AdmobResult; subscriptions: SubscriptionsResult }> {
   const { e, key, store, day } = setup();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
+  const countFrom = countFromMap(config); // throws on an invalid value before any collector starts
   const [apps, admob, subscriptions] = await Promise.all([
     discoverApps(ascFetchApps(key), day),
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom }),
   ]);
   return { appIds: apps.map((a) => a.appId), admob, subscriptions };
 }
@@ -144,9 +145,10 @@ export async function runFinish(): Promise<RunStatus> {
 export async function runCronBatch(appIds: string[]): Promise<CollectionResult> {
   const { e, key, store, day } = setup();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
+  const countFrom = countFromMap(config); // throws on an invalid value before any collector starts
   const [admob, subscriptions, status] = await Promise.all([
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom }),
     runDailyCollection({ day, store, deps: makeDeps(e, key, config), appIds, intelligence: true }),
   ]);
   return { status, admob, subscriptions };
@@ -158,10 +160,11 @@ export async function runCronBatch(appIds: string[]): Promise<CollectionResult> 
 export async function runFullCollection(): Promise<CollectionResult> {
   const { e, key, store, day } = setup();
   const config = await store.readJson<Config>(configPath(), { apps: {} });
+  const countFrom = countFromMap(config); // throws on an invalid value before any collector starts
   const [status, admob, subscriptions] = await Promise.all([
     runDailyCollection({ day, store, deps: makeDeps(e, key, config), intelligence: true }),
     collectAdmobInto(e, store, day),
-    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom: countFromMap(config) }),
+    collectSubscriptionsInto(ascFetchSubscriptionsTsv(key, e.ASC_VENDOR_NUMBER), store, day, { countFrom }),
   ]);
   return { status, admob, subscriptions };
 }

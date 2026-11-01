@@ -292,6 +292,14 @@ test("countFrom: nothing dated before an app's cutoff is written, other apps are
   expect(inputs.find((x: any) => x.appId === "2").downloads.map((p: any) => p.day)).toEqual(["2026-10-18", "2026-10-31", "2026-11-01"]);
 });
 
+test("countFrom: an invalid value stops the collection before anything is written", async () => {
+  const store = memStore();
+  store.fs.set("data/config.json", { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-1" } } });
+  await expect(runDailyCollection({ day: "2026-11-02", store: store as any, deps: okDeps() })).rejects.toThrow(/apps\.1\.countFrom/);
+  expect(store.writeJson).not.toHaveBeenCalled();
+  expect(store.upsertDailyArray).not.toHaveBeenCalled();
+});
+
 test("countFrom: intelligence ignores pre-cutoff rows already sitting in the store", async () => {
   const store = memStore();
   store.fs.set("data/config.json", { apps: { "1": { hidden: false, archived: false, keywords: [], countFrom: "2026-11-01" } } });

@@ -79,7 +79,7 @@ export default async function Revenue({ searchParams }: { searchParams?: Promise
       store.readJson<AppMeta | null>(appMetaPath(id), null),
       Promise.all(months.map((m) => store.readJson<SalesDay[]>(salesPath(id, `${m}-01`), []))),
     ]);
-    return { appId: id, name: meta?.name ?? id, sales: onOrAfter(perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)), cf[id]) };
+    return { appId: id, name: meta?.name ?? id, countFrom: cf[id], sales: onOrAfter(perMonth.flatMap((rows, i) => rowsInMonth(rows, `${months[i]}-01`)), cf[id]) };
   }));
   const availableMonths = [...new Set([
     curMonth, ...all.map((row) => row.day.slice(0, 7)), ...kbAll.map((row) => row.day.slice(0, 7)),
