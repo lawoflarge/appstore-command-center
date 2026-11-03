@@ -60,7 +60,27 @@ jobs:
           # Sanity gate first. A guard that can see no tables at all is pointed at
           # the wrong database or lost catalog visibility — that must be loud, not
           # a silent pass caused by an empty result set.
-          total=$(psql_q "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r'")
+          #
+          # One failure is not a broken guard: a paused or deleted Supabase project.
+          # Its data API host <ref>.supabase.co then drops out of DNS, so the anon
+          # surface this job protects is unreachable for everyone. Only an explicit
+          # NXDOMAIN for a well-formed project ref counts as offline. Any other
+          # failure (timeout, SERVFAIL, wrong password, dig missing) stays red. Once
+          # the project is restored the host resolves again and the full check runs.
+          if ! total=$(psql_q "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r'"); then
+            user="${PGURL#*://}"; user="${user%%[:@]*}"; ref="${user#*.}"
+            if [[ "${ref}" =~ ^[a-z]{20}$ ]]; then
+              dns=$(dig +noall +comments "${ref}.supabase.co" 2>&1 || true)
+              case "${dns}" in
+                *"status: NXDOMAIN"*)
+                  echo "::warning::Supabase project ${ref} is offline (paused or deleted). ${ref}.supabase.co does not resolve, so no RLS surface is reachable. Full checks resume once the project is restored."
+                  exit 0
+                  ;;
+              esac
+            fi
+            echo "::error::Database query failed and the project is not provably offline. Refusing to report success."
+            exit 1
+          fi
           echo "public base tables visible: ${total}"
           if [ "${total}" -lt 1 ]; then
             echo "::error::Saw 0 base tables in schema public. Wrong database or missing catalog access — refusing to report success."
